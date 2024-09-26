@@ -1,0 +1,28 @@
+{
+  "name": "protfolio-backend",
+  "scripts": {
+    "dev": "wrangler dev src/index.ts",
+    "deploy": "wrangler deploy --minify src/index.ts",
+    "db:generate": "npm run env prisma generate",
+    "db:migrate:deploy": "npm run env prisma migrate deploy",
+    "db:migrate:dev": "npm run env prisma migrate dev",
+    "db:seed": "npm run env prisma db seed",
+    "env": "dotenv -e ./.dev.vars --",
+    "prisma": "npm run env prisma"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.637.0",
+    "@neondatabase/serverless": "^0.9.4",
+    "@prisma/adapter-neon": "^5.18.0",
+    "@prisma/client": "^5.18.0",
+    "dotenv": "^16.4.5",
+    "hono": "^4.5.6",
+    "mongoose": "^8.3.2"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240529.0",
+    "dotenv-cli": "^7.4.2",
+    "prisma": "^5.18.0",
+    "wrangler": "^3.57.2"
+  }
+}
