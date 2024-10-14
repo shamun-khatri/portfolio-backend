@@ -11,20 +11,25 @@ const exp = new Hono();
 // Create a new experience
 exp.post("/", async (c: Context) => {
   const prisma = c.get("prisma");
+  const userId = c.get("userId"); // Assuming userId comes from JWT middleware
   const formData = await c.req.formData();
-  console.log("formData", formData);
-  // const body = await c.req.json();
+
   const img = formData.get("img");
 
   if (!(img instanceof File)) {
-    console.log("No image found");
     const data = Object.fromEntries(formData.entries());
-    const savedExperience = await prisma.experience.create({
-      data: data,
-    });
-    return c.json(savedExperience, 201);
+    try {
+      const savedExperience = await prisma.experience.create({
+        data: {
+          ...data,
+          userId,
+        },
+      });
+      return c.json(savedExperience, 201);
+    } catch (error) {
+      return c.json({ error: (error as Error).message }, 500);
+    }
   } else {
-    console.log("Image found");
     const s3 = new S3Client({
       credentials: {
         accessKeyId: c.env.AWS_ACCESS_KEY_ID,
@@ -44,15 +49,21 @@ exp.post("/", async (c: Context) => {
       const imageUrl = `https://${s3Params.Bucket}.s3.${c.env.AWS_REGION}.amazonaws.com/${s3Params.Key}`;
       formData.set("img", imageUrl);
       const data = Object.fromEntries(formData.entries());
-      const savedExperience = await prisma.experience.create({
-        data: data,
-      });
-      return c.json(savedExperience, 201);
+      try {
+        const savedExperience = await prisma.experience.create({
+          data: {
+            ...data,
+            userId,
+          },
+        });
+        return c.json(savedExperience, 201);
+      } catch (error) {
+        return c.json({ error: (error as Error).message }, 500);
+      }
     } catch (error) {
       return c.json(
         {
-          error: `Failed to upload image
-          Error: ${error}`,
+          error: `Failed to upload image. Error: ${error}`,
         },
         500
       );
@@ -60,18 +71,32 @@ exp.post("/", async (c: Context) => {
   }
 });
 
-// Get all experiences
-exp.get("/", async (c: Context) => {
+// Get all experiences for a specific user via dynamic parameter or query parameter
+exp.get("/:user_id", async (c: Context) => {
   const prisma = c.get("prisma");
-  const experiences = await prisma.experience.findMany();
+  const userId = c.req.param("user_id")
+  if (!userId) {
+    return c.json({ error: "User ID is required" }, 400);
+  }
+
+  const experiences = await prisma.experience.findMany({
+    where: { userId },
+  });
   return c.json(experiences, 200);
 });
 
-// Get a single experience
-exp.get("/:id", async (c: Context) => {
+// Get a single experience for a specific user
+exp.get("/:user_id/:id", async (c: Context) => {
   const prisma = c.get("prisma");
+  const userId = c.req.param("user_id")
+  const experienceId = c.req.param("id");
+
+  if (!userId) {
+    return c.json({ error: "User ID is required" }, 400);
+  }
+
   const experience = await prisma.experience.findUnique({
-    where: { id: Number(c.req.param("id")) },
+    where: { id: experienceId, userId },
   });
 
   if (!experience) return c.json({ error: "Experience not found" }, 404);
@@ -81,17 +106,10 @@ exp.get("/:id", async (c: Context) => {
 // Update an experience
 exp.put("/:id", async (c: Context) => {
   const prisma = c.get("prisma");
-  const contentType = c.req.header("Content-Type") || "";
-
-  if (!contentType.includes("multipart/form-data")) {
-    return c.json({ error: "Unsupported Content-Type" }, 400);
-  }
-
   const formData = await c.req.formData();
   const img = formData.get("img");
 
-  // Retrieve the existing experience data
-  const experienceId = Number(c.req.param("id"));
+  const experienceId = c.req.param("id");
   const existingExperience = await prisma.experience.findUnique({
     where: { id: experienceId },
   });
@@ -108,12 +126,9 @@ exp.put("/:id", async (c: Context) => {
     region: c.env.AWS_REGION,
   });
 
-  // Always delete the previous image from S3 if it was stored there
   if (
     existingExperience.img &&
-    existingExperience.img.startsWith(
-      `https://${c.env.AWS_BUCKET_NAME}.s3.`
-    )
+    existingExperience.img.startsWith(`https://${c.env.AWS_BUCKET_NAME}.s3.`)
   ) {
     const previousKey = existingExperience.img.split(".com/")[1];
     try {
@@ -124,40 +139,31 @@ exp.put("/:id", async (c: Context) => {
         })
       );
     } catch (error) {
-      console.error(`Failed to delete previous image: ${(error as Error).message}`);
-      return c.json({ error: `Failed to delete previous image: ${(error as Error).message}` }, 500);
+      return c.json({ error: `Failed to delete previous image: ${error}` }, 500);
     }
   }
 
   let newImageUrl: string | null = null;
 
-  // Handle new image upload if img is a file
   if (img instanceof File) {
     const s3Params = {
       Bucket: c.env.AWS_BUCKET_NAME,
       Key: `images/${Date.now()}-${img.name}`,
       Body: img,
-      ContentType: img.type,
       ACL: ObjectCannedACL.public_read,
     };
 
     try {
-      // Upload new image and get URL
       await s3.send(new PutObjectCommand(s3Params));
       newImageUrl = `https://${s3Params.Bucket}.s3.${c.env.AWS_REGION}.amazonaws.com/${s3Params.Key}`;
       formData.set("img", newImageUrl);
     } catch (error) {
-      return c.json({ error: `Failed to upload image: ${(error as Error).message}` }, 500);
+      return c.json({ error: `Failed to upload image: ${error}` }, 500);
     }
-  } else if (typeof img === "string" && img.startsWith("http")) {
-    // If img is a valid URL, directly use it
-    newImageUrl = img;
   }
 
-  // Convert FormData to a JSON-like object
   const data = Object.fromEntries(formData.entries());
 
-  // Make sure to update with the correct image URL
   if (newImageUrl) {
     data["img"] = newImageUrl;
   }
@@ -174,13 +180,12 @@ exp.put("/:id", async (c: Context) => {
   }
 });
 
-
-// Delete an experience
+// Delete an experience 
 exp.delete("/:id", async (c: Context) => {
   const prisma = c.get("prisma");
 
   const deletedExperience = await prisma.experience.delete({
-    where: { id: Number(c.req.param("id")) },
+    where: { id: c.req.param("id") },
   });
 
   if (!deletedExperience) return c.json({ error: "Experience not found" }, 404);
