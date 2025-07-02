@@ -8,6 +8,10 @@ import {
 
 const exp = new Hono();
 
+exp.get("/", (c: Context) => {
+  return c.text("Experience route");
+});
+
 // Create a new experience
 exp.post("/", async (c: Context) => {
   const prisma = c.get("prisma");

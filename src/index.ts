@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Context, Hono } from "hono";
 import { logger } from "hono/logger";
 import { secureHeaders } from "hono/secure-headers";
 import exp from "./routes/experience";
@@ -22,14 +22,25 @@ const app = new Hono<{ Bindings: Bindings }>();
 app.use(secureHeaders());
 app.use(logger());
 
-app.get("/", (c) => {
-  return c.text("Hello Hono!");
-});
 
 // app.use("api/*", prisma()).basePath("api").route("/experiences", exp);
 
 app.use("api/*", prisma());
-app.use("api/*", cors({ credentials: true, origin: "http://localhost:3000" }));
+app.use(cors({ credentials: true, origin: "http://localhost:3000" }));
+// app.use("api/*", cors({ credentials: true, origin: "*" }));
+
+app.get("/", (c: Context) => {
+  //log the request url
+  const url = c.req.url;
+  console.log("Request URL: ", url);
+  //  log the cookies comes with the request
+  const cookies = c.req.header("cookie");
+  console.log("Cookies: ", cookies);
+  // log the headers comes with the request
+  const headers = c.req.header();
+  console.log("Headers: ", headers);
+  return c.text("Hello Hono!");
+});
 
 app.use('/api/*', verifyJWT());
 

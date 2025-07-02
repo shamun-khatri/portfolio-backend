@@ -12,7 +12,12 @@ export const verifyJWT = (): MiddlewareHandler =>
       await next();
     }
 
-    const token = c.req.header("Authorization")?.split(" ")[1]; // Extract token from Bearer Authorization header
+    // get sesstion token from cookies in the request header
+    const token = c.req.header("Cookie")?.split("; ")
+    .find((row) => row.startsWith("next-auth.session-token="))
+    ?.split("=")[1];
+
+    // const token = c.req.header("Authorization")?.split(" ")[1]; // Extract token from Bearer Authorization header
     if (!token) {
       return c.json({ error: "No token provided" }, 401);
     }
@@ -27,7 +32,6 @@ export const verifyJWT = (): MiddlewareHandler =>
       if (!decoded) {
         return c.json({ error: "Invalid token" }, 401);
       }
-
       // You can store the decoded token in the context
       c.set("decodedToken", decoded);
 
