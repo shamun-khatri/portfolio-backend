@@ -15,7 +15,7 @@ exp.get("/", (c: Context) => {
 // Create a new experience
 exp.post("/", async (c: Context) => {
   const prisma = c.get("prisma");
-  const userId = c.get("userId"); // Assuming userId comes from JWT middleware
+  const userId = c.get("decodedToken").id; // Assuming userId comes from JWT middleware
   const formData = await c.req.formData();
 
   const img = formData.get("img");

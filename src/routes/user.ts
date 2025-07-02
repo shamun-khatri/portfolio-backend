@@ -5,14 +5,13 @@ const user = new Hono();
 // Create or update user based on Google Auth data
 user.post("/", async (c: Context) => {
   const prisma = c.get("prisma");
-  const { name, email, avatar, googleId } = await c.req.json();
-  console.log("googleId", googleId);
+  const { id, name, email, avatar, googleId } = await c.req.json();
 
   try {
     const user = await prisma.user.upsert({
       where: { email },
       update: { name, avatar, googleId },
-      create: { name, email, avatar, googleId },
+      create: { id, name, email, avatar, googleId },
     });
     return c.json(user, 201);
   } catch (error) {
@@ -34,7 +33,7 @@ user.get("/getuser", async (c: Context) => {
         name: true,
         // Exclude createdAt to isolate the issue
         // createdAt: true,
-        updatedAt: true,
+        // updatedAt: true,
       },    
     });
     if (!user) {
