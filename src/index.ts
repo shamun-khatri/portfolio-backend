@@ -44,7 +44,7 @@ app.get("/", (c: Context) => {
 
 app.use('/api/*', verifyJWT());
 
-app.route("/api/experiences", exp);
+app.route("/api/experience", exp);
 
 app.route("/api/education", edu);
 
