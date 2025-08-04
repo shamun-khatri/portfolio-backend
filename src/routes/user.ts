@@ -2,19 +2,28 @@ import { Hono, Context } from "hono";
 
 const user = new Hono();
 
-// Create or update user based on Google Auth data
+// Create user based on Google Auth data
 user.post("/", async (c: Context) => {
   const prisma = c.get("prisma");
   const { id, name, email, avatar, googleId } = await c.req.json();
 
+  const createdAt = new Date().toISOString(); // Ensure createdAt is set to current time
+  const data = {
+    id: id, // Use the ID from Google Auth
+    name: name,
+    email: email,
+    avatar: avatar,
+    googleId: googleId,
+    createdAt: createdAt, // Set createdAt to current time
+  };
+
   try {
-    const user = await prisma.user.upsert({
-      where: { email },
-      update: { name, avatar, googleId },
-      create: { id, name, email, avatar, googleId },
+    const user = await prisma.user.create({
+      data: data,
     });
     return c.json(user, 201);
   } catch (error) {
+    console.error("Error creating or updating user:", error);
     return c.json({ error: (error as Error).message }, 500);
   }
 });
@@ -34,7 +43,7 @@ user.get("/getuser", async (c: Context) => {
         // Exclude createdAt to isolate the issue
         // createdAt: true,
         // updatedAt: true,
-      },    
+      },
     });
     if (!user) {
       // Return an empty array
@@ -42,6 +51,7 @@ user.get("/getuser", async (c: Context) => {
     }
     return c.json([user], 200);
   } catch (error) {
+    console.error("Error fetching user:", error);
     return c.json({ error: (error as Error).message }, 500);
   }
 });
