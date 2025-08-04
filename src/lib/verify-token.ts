@@ -13,9 +13,11 @@ export const verifyJWT = (): MiddlewareHandler =>
     }
 
     // get sesstion token from cookies in the request header
-    const token = c.req.header("Cookie")?.split("; ")
-    .find((row) => row.startsWith("next-auth.session-token="))
-    ?.split("=")[1];
+    const token = c.req
+      .header("Cookie")
+      ?.split("; ")
+      .find((row) => row.startsWith("next-auth.session-token="))
+      ?.split("=")[1];
 
     // const token = c.req.header("Authorization")?.split(" ")[1]; // Extract token from Bearer Authorization header
     if (!token) {
@@ -26,7 +28,7 @@ export const verifyJWT = (): MiddlewareHandler =>
       const decoded = await decode({
         token: token,
         secret: secret,
-        salt: "", // Add your salt if needed, otherwise leave empty
+        salt: "next-auth.session-token", // Add your salt if needed, otherwise leave empty
       });
 
       if (!decoded) {
