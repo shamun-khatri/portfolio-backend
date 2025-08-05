@@ -1,4 +1,5 @@
 import { Hono, Context } from "hono";
+import { serialize } from "object-to-formdata";
 import {
   S3Client,
   PutObjectCommand,
@@ -12,13 +13,71 @@ exp.get("/", (c: Context) => {
   return c.text("Experience route");
 });
 
+function jsonToFormData(jsonObject) {
+  const formData = new FormData();
+
+  for (const key in jsonObject) {
+    if (jsonObject.hasOwnProperty(key)) {
+      const value = jsonObject[key];
+
+      // Handle file objects directly
+      if (value instanceof File || value instanceof Blob) {
+        formData.append(key, value, value.name || "untitled"); // Add filename for File objects
+      } else if (typeof value === "object" && value !== null) {
+        // Handle nested objects/arrays by stringifying them
+        // Note: FormData flattens nested structures, so complex objects might need specific handling
+        formData.append(key, JSON.stringify(value));
+      } else {
+        // Handle primitive values
+        formData.append(key, value);
+      }
+    }
+  }
+  return formData;
+}
+
 // Create a new experience
 exp.post("/", async (c: Context) => {
   const prisma = c.get("prisma");
   const userId = c.get("decodedToken").id; // Assuming userId comes from JWT middleware
-  const formData = await c.req.formData();
 
-  const img = formData.get("img");
+  console.log("userId:", userId);
+
+  const contentType = c.req.header("Content-Type");
+
+  let formData: FormData | Record<string, any> = {};
+  let img: File | Blob | String | null = null;
+  let skills: string[] = [];
+
+  if (contentType?.includes("application/json")) {
+    const data = await c.req.json();
+    formData = jsonToFormData(data);
+
+    const imgData: Record<string, any> = data.img[0];
+    if (!imgData || !imgData["thumbUrl"]) {
+      return c.json({ error: "Image data is missing or invalid" }, 400);
+    }
+
+    const base64Data = imgData["thumbUrl"].split(",")[1];
+    const binaryData = atob(base64Data);
+    const arrayBuffer = new Uint8Array(binaryData.length);
+    for (let i = 0; i < binaryData.length; i++) {
+      arrayBuffer[i] = binaryData.charCodeAt(i);
+    }
+    const blob = new Blob([arrayBuffer], { type: imgData["type"] });
+
+    img = new File([blob], imgData["name"], { type: imgData["type"] });
+    formData.set("img", img);
+  } else if (contentType?.includes("multipart/form-data")) {
+    formData = await c.req.formData();
+    img = formData.get("img");
+
+    // Convert skills[] to an array
+    const skillsRaw = formData.get("skills");
+    skills = skillsRaw ? JSON.parse(skillsRaw.toString()) : [];
+  } else {
+    return c.json({ error: "Unsupported Content-Type" }, 415);
+  }
 
   if (!(img instanceof File)) {
     const data = Object.fromEntries(formData.entries());
@@ -26,11 +85,13 @@ exp.post("/", async (c: Context) => {
       const savedExperience = await prisma.experience.create({
         data: {
           ...data,
+          skills, // Pass the skills array
           userId,
         },
       });
       return c.json(savedExperience, 201);
     } catch (error) {
+      console.error("Error saving experience:", error);
       return c.json({ error: (error as Error).message }, 500);
     }
   } else {
@@ -53,18 +114,22 @@ exp.post("/", async (c: Context) => {
       const imageUrl = `https://${s3Params.Bucket}.s3.${c.env.AWS_REGION}.amazonaws.com/${s3Params.Key}`;
       formData.set("img", imageUrl);
       const data = Object.fromEntries(formData.entries());
+      delete data["skills[]"];
       try {
         const savedExperience = await prisma.experience.create({
           data: {
             ...data,
+            skills, // Pass the skills array
             userId,
           },
         });
         return c.json(savedExperience, 201);
       } catch (error) {
+        console.error("Error saving experience:", error);
         return c.json({ error: (error as Error).message }, 500);
       }
     } catch (error) {
+      console.error("Error uploading image to S3:", error);
       return c.json(
         {
           error: `Failed to upload image. Error: ${error}`,
@@ -78,7 +143,7 @@ exp.post("/", async (c: Context) => {
 // Get all experiences for a specific user via dynamic parameter or query parameter
 exp.get("/:user_id", async (c: Context) => {
   const prisma = c.get("prisma");
-  const userId = c.req.param("user_id")
+  const userId = c.req.param("user_id");
   if (!userId) {
     return c.json({ error: "User ID is required" }, 400);
   }
@@ -92,7 +157,7 @@ exp.get("/:user_id", async (c: Context) => {
 // Get a single experience for a specific user
 exp.get("/:user_id/:id", async (c: Context) => {
   const prisma = c.get("prisma");
-  const userId = c.req.param("user_id")
+  const userId = c.req.param("user_id");
   const experienceId = c.req.param("id");
 
   if (!userId) {
@@ -143,7 +208,10 @@ exp.put("/:id", async (c: Context) => {
         })
       );
     } catch (error) {
-      return c.json({ error: `Failed to delete previous image: ${error}` }, 500);
+      return c.json(
+        { error: `Failed to delete previous image: ${error}` },
+        500
+      );
     }
   }
 
@@ -184,7 +252,7 @@ exp.put("/:id", async (c: Context) => {
   }
 });
 
-// Delete an experience 
+// Delete an experience
 exp.delete("/:id", async (c: Context) => {
   const prisma = c.get("prisma");
 
