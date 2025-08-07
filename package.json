@@ -17,14 +17,12 @@
     "@prisma/client": "^5.18.0",
     "dotenv": "^16.4.5",
     "hono": "^4.5.6",
-    "jose": "^5.9.3",
-    "mongoose": "^8.3.2",
-    "next-auth": "^4.24.5"
+    "next-auth": "^5.0.0-beta.29"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240529.0",
     "dotenv-cli": "^7.4.2",
     "prisma": "^5.18.0",
-    "wrangler": "^3.57.2"
+    "wrangler": "^4.27.0"
   }
 }

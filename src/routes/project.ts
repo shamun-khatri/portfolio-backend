@@ -31,6 +31,7 @@ pjt.post("/", async (c: Context) => {
   delete projectData["member"];
   console.log("projectData", projectData);
   console.log("members", members);
+  console.log("type of members", typeof members);
   try {
     // const savedProject = await prisma.project.create({
     //   data: {
@@ -70,10 +71,9 @@ pjt.post("/", async (c: Context) => {
         members: true, // Include members if they exist
       },
     });
-    
+
     console.log("hereeee");
     return c.json(fullProject, 201); // Return the full project with members if available
-    
   } catch (error) {
     return c.json(
       { error: `Failed to create project: ${(error as Error).message}` },
@@ -169,7 +169,7 @@ pjt.put("/:id", async (c: Context) => {
     // Build the final update query
     const updateQuery = `
       UPDATE "Project"
-      SET ${updateFields.join(', ')}
+      SET ${updateFields.join(", ")}
       WHERE id = ${projectId};
     `;
 
@@ -206,7 +206,6 @@ pjt.put("/:id", async (c: Context) => {
     `;
 
     return c.json(fullProject[0], 200);
-
   } catch (error) {
     return c.json(
       { error: `Failed to update project: ${(error as Error).message}` },
@@ -214,7 +213,6 @@ pjt.put("/:id", async (c: Context) => {
     );
   }
 });
-
 
 // Delete a project by ID
 pjt.delete("/:id", async (c: Context) => {
@@ -236,7 +234,12 @@ pjt.delete("/:id", async (c: Context) => {
       return c.json({ error: "Project not found" }, 404);
     }
 
-    return c.json({ message: `Project with ID ${projectId} and its members have been deleted.` }, 200);
+    return c.json(
+      {
+        message: `Project with ID ${projectId} and its members have been deleted.`,
+      },
+      200
+    );
   } catch (error) {
     return c.json(
       { error: `Failed to delete project: ${(error as Error).message}` },
@@ -260,7 +263,10 @@ pjt.delete("/", async (c: Context) => {
       DELETE FROM "Project";
     `;
 
-    return c.json({ message: "All projects and their members have been deleted." }, 200);
+    return c.json(
+      { message: "All projects and their members have been deleted." },
+      200
+    );
   } catch (error) {
     return c.json(
       { error: `Failed to delete all projects: ${(error as Error).message}` },
@@ -268,7 +274,6 @@ pjt.delete("/", async (c: Context) => {
     );
   }
 });
-
 
 async function uploadToS3(
   file: File,

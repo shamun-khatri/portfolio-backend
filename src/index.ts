@@ -42,6 +42,10 @@ app.get("/", (c: Context) => {
   return c.text("Hello Hono!");
 });
 
+app.notFound((c) => {
+  return c.json({ error: "Route not found" }, 404);
+});
+
 app.use('/api/*', verifyJWT());
 
 app.route("/api/experience", exp);
