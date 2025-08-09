@@ -5,12 +5,15 @@ import {
   ObjectCannedACL,
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
+import cuid from "cuid";
 
 const pjt = new Hono();
 
 // Create a new project
 pjt.post("/", async (c: Context) => {
   const prisma = c.get("prisma");
+  const userId = c.get("decodedToken").id; // Assuming userId comes from JWT middleware
+
   const formData = await c.req.formData();
   const img = formData.get("image");
 
@@ -43,24 +46,32 @@ pjt.post("/", async (c: Context) => {
     //   },
     // });
 
-    const { title, description, date, category, github, webapp } = projectData;
+    const projectId = cuid();
+    const { title, description, date, category, github, projectUrl } =
+      projectData;
 
     // Single raw SQL query with CTE for both Project and Member insertions
     const savedProject = await prisma.$queryRaw`
-      INSERT INTO "Project" (title, description, image, date, category, github, webapp)
-      VALUES (${title}, ${description}, ${imageUrl}, ${date}, ${category}, ${github}, ${webapp})
+      INSERT INTO "Project" (id, title, description, image, date, category, github, "projectUrl", "userId")
+      VALUES (${projectId} ,${title}, ${description}, ${imageUrl}, ${date}, ${category}, ${github}, ${projectUrl}, ${userId})
       RETURNING *;
     `;
 
-    const projectId = savedProject[0].id; // Get the newly created project's ID
+    // const projectId = savedProject[0].id; // Get the newly created project's ID
 
     // Insert members if the array is not empty
     if (members.length > 0) {
+      // Add unique IDs to each member
+      const membersWithIds = members.map((member) => ({
+        id: cuid(),
+        ...member,
+      }));
+
       await prisma.$queryRaw`
-        INSERT INTO "Member" (name, img, linkedin, github, "projectId")
-        SELECT members.name, members.img, members.linkedin, members.github, ${projectId}
-        FROM jsonb_to_recordset(${JSON.stringify(members)}::jsonb)
-        AS members(name text, img text, linkedin text, github text);
+        INSERT INTO "Member" (id, name, img, linkedin, github, "projectId")
+        SELECT members.id, members.name, members.img, members.linkedin, members.github, ${projectId}
+        FROM jsonb_to_recordset(${JSON.stringify(membersWithIds)}::jsonb)
+        AS members(id text, name text, img text, linkedin text, github text);
       `;
     }
 
@@ -154,7 +165,8 @@ pjt.put("/:id", async (c: Context) => {
   delete projectData["member"];
 
   try {
-    const { title, description, date, category, github, webapp } = projectData;
+    const { title, description, date, category, github, projectUrl } =
+      projectData;
 
     // Prepare the fields to update (ignore null fields)
     const updateFields = [];
@@ -163,7 +175,7 @@ pjt.put("/:id", async (c: Context) => {
     if (date) updateFields.push(`date = '${date}'`);
     if (category) updateFields.push(`category = '${category}'`);
     if (github) updateFields.push(`github = '${github}'`);
-    if (webapp) updateFields.push(`webapp = '${webapp}'`);
+    if (projectUrl) updateFields.push(`projectUrl = '${projectUrl}'`);
     if (imageUrl) updateFields.push(`image = '${imageUrl}'`);
 
     // Build the final update query
