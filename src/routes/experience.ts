@@ -140,7 +140,7 @@ exp.post("/", async (c: Context) => {
   }
 });
 
-// Get all experiences for a specific user via dynamic parameter or query parameter
+// Get all experiences for a specific user via dynamic parameter
 exp.get("/:user_id", async (c: Context) => {
   const prisma = c.get("prisma");
   const userId = c.req.param("user_id");

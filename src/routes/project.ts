@@ -13,7 +13,8 @@ const pjt = new Hono();
 pjt.post("/", async (c: Context) => {
   const prisma = c.get("prisma");
   const userId = c.get("decodedToken").id; // Assuming userId comes from JWT middleware
-
+  // check content header
+  console.log("Content-Type:", c.req.header("Content-Type"));
   const formData = await c.req.formData();
   const img = formData.get("image");
 
@@ -93,12 +94,18 @@ pjt.post("/", async (c: Context) => {
   }
 });
 
-// Get all projects
-pjt.get("/", async (c: Context) => {
+// Get all projects for a specific user via dynamic parameter
+pjt.get("/:user_id", async (c: Context) => {
   const prisma = c.get("prisma");
+  const userId = c.req.param("user_id");
+  if (!userId) {
+    return c.json({ error: "User ID is required" }, 400);
+  }
+
   try {
     const projects = await prisma.project.findMany({
-      include: { members: true },
+      where: { userId },
+      include: { members: true }, // Include members in the response
     });
     return c.json(projects, 200);
   } catch (error) {
