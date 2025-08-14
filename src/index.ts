@@ -8,6 +8,7 @@ import pjt from "./routes/project";
 import { cors } from "hono/cors";
 import { verifyJWT } from "./lib/verify-token";
 import user from "./routes/user";
+import bio from "./routes/bio";
 
 type Bindings = {
   DATABASE_URL: string;
@@ -21,7 +22,6 @@ type Bindings = {
 const app = new Hono<{ Bindings: Bindings }>();
 app.use(secureHeaders());
 app.use(logger());
-
 
 // app.use("api/*", prisma()).basePath("api").route("/experiences", exp);
 
@@ -46,7 +46,7 @@ app.notFound((c) => {
   return c.json({ error: "Route not found" }, 404);
 });
 
-app.use('/api/*', verifyJWT());
+app.use("/api/*", verifyJWT());
 
 app.route("/api/experience", exp);
 
@@ -55,6 +55,8 @@ app.route("/api/education", edu);
 app.route("/api/project", pjt);
 
 app.route("/api/user", user);
+
+app.route("api/bio", bio);
 
 app.onError((err, c) => {
   console.error(err.message);
