@@ -93,8 +93,8 @@ model Bio {
   name         String
   designations String[]
   desc         String
-  porfileImage String
+  profileImage String
   resumeUrl    String?
-  userId       String
+  userId       String   @unique
   user         User     @relation(fields: [userId], references: [id])
 }
