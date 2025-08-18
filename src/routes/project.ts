@@ -17,6 +17,8 @@ pjt.post("/", async (c: Context) => {
   console.log("Content-Type:", c.req.header("Content-Type"));
   const formData = await c.req.formData();
   const img = formData.get("image");
+  console.log("Image:", img);
+  console.log("Form Data image:", formData.get("image"));
 
   let imageUrl: string | null = null;
 
@@ -24,6 +26,7 @@ pjt.post("/", async (c: Context) => {
     // Handle S3 image upload (similar to previous code)
     imageUrl = await uploadToS3(img, c);
     formData.set("image", imageUrl);
+    console.log("Image uploaded to S3:", imageUrl);
   } else if (typeof img === "string" && img.startsWith("http")) {
     imageUrl = img;
   }
