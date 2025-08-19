@@ -150,7 +150,7 @@ pjt.put("/:id", async (c: Context) => {
   const formData = await c.req.formData();
   const img = formData.get("image");
 
-  const projectId = Number(c.req.param("id"));
+  const projectId = c.req.param("id");
 
   const existingProject = await prisma.$queryRaw`
     SELECT * FROM "Project" WHERE id = ${projectId};
