@@ -145,96 +145,198 @@ pjt.get("/id/:id", async (c: Context) => {
 });
 
 // update a project
+// pjt.put("/:id", async (c: Context) => {
+//   const prisma = c.get("prisma");
+//   const formData = await c.req.formData();
+//   const img = formData.get("image");
+
+//   const projectId = c.req.param("id");
+
+//   const existingProject = await prisma.$queryRaw`
+//     SELECT * FROM "Project" WHERE id = ${projectId};
+//   `;
+
+//   if (!existingProject.length) {
+//     return c.json({ error: "Project not found" }, 404);
+//   }
+
+//   let imageUrl: string | null = null;
+
+//   if (img instanceof File) {
+//     imageUrl = await uploadToS3(img, c, existingProject[0].image);
+//     formData.set("image", imageUrl);
+//   } else if (typeof img === "string" && img.startsWith("http")) {
+//     imageUrl = img;
+//   }
+
+//   const membersData = formData.get("member");
+//   const members = membersData ? JSON.parse(membersData.toString()) : [];
+
+//   const projectData = Object.fromEntries(formData.entries());
+//   delete projectData["member"];
+
+//   try {
+//     const { title, description, date, category, github, projectUrl } =
+//       projectData;
+
+//     // Prepare the fields to update (ignore null fields)
+//     const updateFields = [];
+//     if (title) updateFields.push(`title = '${title}'`);
+//     if (description) updateFields.push(`description = '${description}'`);
+//     if (date) updateFields.push(`date = '${date}'`);
+//     if (category) updateFields.push(`category = '${category}'`);
+//     if (github) updateFields.push(`github = '${github}'`);
+//     if (projectUrl) updateFields.push(`projectUrl = '${projectUrl}'`);
+//     if (imageUrl) updateFields.push(`image = '${imageUrl}'`);
+
+//     // Build the final update query
+//     const updateQuery = `
+//       UPDATE "Project"
+//       SET ${updateFields.join(", ")}
+//       WHERE id = '${projectId}';
+//     `;
+
+//     // Execute the update query
+//     await prisma.$executeRawUnsafe(updateQuery);
+
+//     // Handle updating, inserting, or removing members
+//     if (members.length > 0) {
+//       for (const member of members) {
+//         if (member.id) {
+//           // Update existing member
+//           await prisma.$executeRaw`
+//             UPDATE "Member"
+//             SET name = ${member.name}, img = ${member.img}, linkedin = ${member.linkedin}, github = ${member.github}
+//             WHERE id = ${member.id} AND "projectId" = ${projectId};
+//           `;
+//         } else {
+//           // Insert new member
+//           await prisma.$executeRaw`
+//             INSERT INTO "Member" (name, img, linkedin, github, "projectId")
+//             VALUES (${member.name}, ${member.img}, ${member.linkedin}, ${member.github}, ${projectId});
+//           `;
+//         }
+//       }
+//     }
+
+//     // Retrieve the full project with members
+//     const fullProject = await prisma.$queryRaw`
+//       SELECT p.*, json_agg(m.*) AS members
+//       FROM "Project" p
+//       LEFT JOIN "Member" m ON p.id = m."projectId"
+//       WHERE p.id = ${projectId}
+//       GROUP BY p.id;
+//     `;
+
+//     return c.json(fullProject[0], 200);
+//   } catch (error) {
+//     return c.json(
+//       { error: `Failed to update project: ${(error as Error).message}` },
+//       500
+//     );
+//   }
+// });
+
 pjt.put("/:id", async (c: Context) => {
   const prisma = c.get("prisma");
+  const projectId = c.req.param("id"); // cuid string
+
+  // Ensure project exists
+  const existing = await prisma.project.findUnique({
+    where: { id: projectId },
+    include: { members: true },
+  });
+  if (!existing) return c.json({ error: "Project not found" }, 404);
+
   const formData = await c.req.formData();
+  console.log("Form Data:", formData);
   const img = formData.get("image");
-
-  const projectId = c.req.param("id");
-
-  const existingProject = await prisma.$queryRaw`
-    SELECT * FROM "Project" WHERE id = ${projectId};
-  `;
-
-  if (!existingProject.length) {
-    return c.json({ error: "Project not found" }, 404);
-  }
-
   let imageUrl: string | null = null;
 
   if (img instanceof File) {
-    imageUrl = await uploadToS3(img, c, existingProject[0].image);
-    formData.set("image", imageUrl);
+    imageUrl = await uploadToS3(img, c, existing.image);
   } else if (typeof img === "string" && img.startsWith("http")) {
     imageUrl = img;
   }
 
-  const membersData = formData.get("member");
-  const members = membersData ? JSON.parse(membersData.toString()) : [];
+  const membersRaw = formData.get("member");
+  const incomingMembers = membersRaw ? JSON.parse(membersRaw.toString()) : [];
 
-  const projectData = Object.fromEntries(formData.entries());
-  delete projectData["member"];
+  // Build partial update data safely
+  const data: any = {};
+  const simpleFields = [
+    "title",
+    "description",
+    "date",
+    "category",
+    "github",
+    "projectUrl",
+  ];
+  for (const f of simpleFields) {
+    const v = formData.get(f);
+    if (typeof v === "string" && v.trim() !== "") data[f] = v;
+  }
+  if (imageUrl) data.image = imageUrl;
 
-  try {
-    const { title, description, date, category, github, projectUrl } =
-      projectData;
+  // Update project (if there is at least one field to change)
+  let updatedProject;
+  if (Object.keys(data).length > 0) {
+    updatedProject = await prisma.project.update({
+      where: { id: projectId },
+      data,
+    });
+  } else {
+    updatedProject = existing;
+  }
 
-    // Prepare the fields to update (ignore null fields)
-    const updateFields = [];
-    if (title) updateFields.push(`title = '${title}'`);
-    if (description) updateFields.push(`description = '${description}'`);
-    if (date) updateFields.push(`date = '${date}'`);
-    if (category) updateFields.push(`category = '${category}'`);
-    if (github) updateFields.push(`github = '${github}'`);
-    if (projectUrl) updateFields.push(`projectUrl = '${projectUrl}'`);
-    if (imageUrl) updateFields.push(`image = '${imageUrl}'`);
+  // Sync members (create / update / delete removed)
+  if (Array.isArray(incomingMembers)) {
+    const existingIds = new Set(existing.members.map((m) => m.id));
+    const incomingIds = new Set(
+      incomingMembers.filter((m) => m.id).map((m) => m.id)
+    );
 
-    // Build the final update query
-    const updateQuery = `
-      UPDATE "Project"
-      SET ${updateFields.join(", ")}
-      WHERE id = ${projectId};
-    `;
-
-    // Execute the update query
-    await prisma.$executeRawUnsafe(updateQuery);
-
-    // Handle updating, inserting, or removing members
-    if (members.length > 0) {
-      for (const member of members) {
-        if (member.id) {
-          // Update existing member
-          await prisma.$executeRaw`
-            UPDATE "Member"
-            SET name = ${member.name}, img = ${member.img}, linkedin = ${member.linkedin}, github = ${member.github}
-            WHERE id = ${member.id} AND "projectId" = ${projectId};
-          `;
-        } else {
-          // Insert new member
-          await prisma.$executeRaw`
-            INSERT INTO "Member" (name, img, linkedin, github, "projectId")
-            VALUES (${member.name}, ${member.img}, ${member.linkedin}, ${member.github}, ${projectId});
-          `;
-        }
-      }
+    // Delete members that were removed
+    const toDelete = [...existingIds].filter((id) => !incomingIds.has(id));
+    if (toDelete.length) {
+      await prisma.member.deleteMany({
+        where: { id: { in: toDelete }, projectId },
+      });
     }
 
-    // Retrieve the full project with members
-    const fullProject = await prisma.$queryRaw`
-      SELECT p.*, json_agg(m.*) AS members
-      FROM "Project" p
-      LEFT JOIN "Member" m ON p.id = m."projectId"
-      WHERE p.id = ${projectId}
-      GROUP BY p.id;
-    `;
-
-    return c.json(fullProject[0], 200);
-  } catch (error) {
-    return c.json(
-      { error: `Failed to update project: ${(error as Error).message}` },
-      500
-    );
+    // Upsert incoming members
+    for (const m of incomingMembers) {
+      if (m.id && existingIds.has(m.id)) {
+        await prisma.member.update({
+          where: { id: m.id },
+          data: {
+            name: m.name,
+            img: m.img,
+            linkedin: m.linkedin,
+            github: m.github,
+          },
+        });
+      } else {
+        await prisma.member.create({
+          data: {
+            name: m.name,
+            img: m.img,
+            linkedin: m.linkedin,
+            github: m.github,
+            projectId,
+          },
+        });
+      }
+    }
   }
+
+  // Return fresh project with members
+  const fullProject = await prisma.project.findUnique({
+    where: { id: projectId },
+    include: { members: true },
+  });
+
+  return c.json(fullProject, 200);
 });
 
 // Delete a project by ID
