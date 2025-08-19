@@ -120,9 +120,10 @@ pjt.get("/:user_id", async (c: Context) => {
 });
 
 // Get a project by ID
-pjt.get("/:id", async (c: Context) => {
+pjt.get("/id/:id", async (c: Context) => {
   const prisma = c.get("prisma");
-  const projectId = Number(c.req.param("id"));
+  const projectId = c.req.param("id");
+  console.log("Project ID:", projectId);
 
   try {
     const project = await prisma.project.findUnique({
