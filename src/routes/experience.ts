@@ -175,6 +175,11 @@ exp.get("/:user_id/:id", async (c: Context) => {
 // Update an experience
 exp.put("/:id", async (c: Context) => {
   const prisma = c.get("prisma");
+  // Auth check
+  const userId = c.get("decodedToken")?.id; // Assuming userId comes from JWT middleware
+  if (!userId) {
+    return c.json({ error: "User ID is required" }, 400);
+  }
   const formData = await c.req.formData();
   const img = formData.get("img");
 
@@ -187,37 +192,43 @@ exp.put("/:id", async (c: Context) => {
     return c.json({ error: "Experience not found" }, 404);
   }
 
-  const s3 = new S3Client({
-    credentials: {
-      accessKeyId: c.env.AWS_ACCESS_KEY_ID,
-      secretAccessKey: c.env.AWS_SECRET_ACCESS_KEY,
-    },
-    region: c.env.AWS_REGION,
-  });
-
-  if (
-    existingExperience.img &&
-    existingExperience.img.startsWith(`https://${c.env.AWS_BUCKET_NAME}.s3.`)
-  ) {
-    const previousKey = existingExperience.img.split(".com/")[1];
-    try {
-      await s3.send(
-        new DeleteObjectCommand({
-          Bucket: c.env.AWS_BUCKET_NAME,
-          Key: previousKey,
-        })
-      );
-    } catch (error) {
-      return c.json(
-        { error: `Failed to delete previous image: ${error}` },
-        500
-      );
-    }
+  // Ownership check
+  if (existingExperience.userId !== userId) {
+    return c.json({ error: "Forbidden: You do not own this resource" }, 403);
   }
 
   let newImageUrl: string | null = null;
 
   if (img instanceof File) {
+    const s3 = new S3Client({
+      credentials: {
+        accessKeyId: c.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: c.env.AWS_SECRET_ACCESS_KEY,
+      },
+      region: c.env.AWS_REGION,
+    });
+
+    // Delete previous S3 image only if uploading a new image
+    if (
+      existingExperience.img &&
+      existingExperience.img.startsWith(`https://${c.env.AWS_BUCKET_NAME}.s3.`)
+    ) {
+      const previousKey = existingExperience.img.split(".com/")[1];
+      try {
+        await s3.send(
+          new DeleteObjectCommand({
+            Bucket: c.env.AWS_BUCKET_NAME,
+            Key: previousKey,
+          })
+        );
+      } catch (error) {
+        return c.json(
+          { error: `Failed to delete previous image: ${error}` },
+          500
+        );
+      }
+    }
+
     const s3Params = {
       Bucket: c.env.AWS_BUCKET_NAME,
       Key: `images/${Date.now()}-${img.name}`,
@@ -232,13 +243,21 @@ exp.put("/:id", async (c: Context) => {
     } catch (error) {
       return c.json({ error: `Failed to upload image: ${error}` }, 500);
     }
+  } else if (typeof img === "string" && img.startsWith("http")) {
+    newImageUrl = img;
   }
 
-  const data = Object.fromEntries(formData.entries());
+  // Convert FormData to a plain object safely (avoid relying on entries() typings)
+  const data: Record<string, any> = {};
+  for (const [key, value] of (formData as any)) {
+    data[key] = value;
+  }
 
   if (newImageUrl) {
     data["img"] = newImageUrl;
   }
+  // Never allow changing ownership via update
+  if ("userId" in data) delete (data as Record<string, unknown>)["userId"];
 
   try {
     const updatedExperience = await prisma.experience.update({
