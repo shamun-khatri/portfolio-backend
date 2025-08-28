@@ -55,7 +55,11 @@ edu.post("/", async (c: Context) => {
     return c.json({ error: "Unsupported Content-Type" }, 415);
   }
 
-  const data = Object.fromEntries(formData.entries());
+  // Convert formData to a plain object safely (avoid TS lib mismatch on FormData.entries)
+  const data: Record<string, any> = {};
+  for (const [key, value] of (formData as any)) {
+    data[key] = value;
+  }
   data["userId"] = userId; // Add userId to the data object
 
   try {
@@ -105,7 +109,7 @@ edu.get("/:user_id/:id", async (c: Context) => {
   const userId = c.req.param("user_id");
 
   try {
-    const education = await prisma.education.findUnique({
+    const education = await prisma.education.findFirst({
       where: { id: educationId, userId },
     });
 
@@ -122,9 +126,15 @@ edu.get("/:user_id/:id", async (c: Context) => {
 // Update education by ID
 edu.put("/:id", async (c: Context) => {
   const prisma = c.get("prisma");
+  // Ensure user is authenticated and owns the record
+  const userId = c.get("decodedToken")?.id;
+  if (!userId) {
+    return c.json({ error: "User ID is required" }, 401);
+  }
+
   const formData = await c.req.formData();
   const img = formData.get("img");
-  const educationId = Number(c.req.param("id"));
+  const educationId = c.req.param("id");
 
   const existingEducation = await prisma.education.findUnique({
     where: { id: educationId },
@@ -134,30 +144,16 @@ edu.put("/:id", async (c: Context) => {
     return c.json({ error: "Education not found" }, 404);
   }
 
-  let newImageUrl: string | null = null;
-
-  // Delete previous image from S3 if it's stored there
-  if (
-    existingEducation.img &&
-    existingEducation.img.startsWith(`https://${c.env.AWS_BUCKET_NAME}.s3.`)
-  ) {
-    try {
-      const previousKey = existingEducation.img.split(".com/")[1];
-      await uploadToS3(new File([], ""), c, existingEducation.img); // Reusing the same function to delete the previous image
-    } catch (error) {
-      return c.json(
-        {
-          error: `Failed to delete previous image: ${(error as Error).message}`,
-        },
-        500
-      );
-    }
+  if (existingEducation.userId !== userId) {
+    return c.json({ error: "Forbidden: You do not own this resource" }, 403);
   }
 
-  // Upload new image if a new image is provided
+  let newImageUrl: string | null = null;
+
+  // Upload new image if a new image is provided. If previous was on S3, it will be deleted by uploadToS3.
   if (img instanceof File) {
     try {
-      newImageUrl = await uploadToS3(img, c); // Using the uploadToS3 function
+      newImageUrl = await uploadToS3(img, c, existingEducation.img);
       formData.set("img", newImageUrl);
     } catch (error) {
       return c.json(
@@ -166,11 +162,18 @@ edu.put("/:id", async (c: Context) => {
       );
     }
   } else if (typeof img === "string" && img.startsWith("http")) {
+    // Maintain provided URL as-is (no S3 work needed)
     newImageUrl = img;
   }
 
-  const data = Object.fromEntries(formData.entries());
+  // Convert formData to a plain object safely
+  const data: Record<string, any> = {};
+  for (const [key, value] of (formData as any)) {
+    data[key] = value;
+  }
   if (newImageUrl) data["img"] = newImageUrl;
+  // Never allow changing ownership via update
+  if ("userId" in data) delete (data as Record<string, unknown>)["userId"];
 
   try {
     const updatedEducation = await prisma.education.update({
@@ -187,7 +190,13 @@ edu.put("/:id", async (c: Context) => {
 // Delete an education by ID
 edu.delete("/:id", async (c: Context) => {
   const prisma = c.get("prisma");
-  const educationId = Number(c.req.param("id"));
+  const educationId = c.req.param("id");
+
+  // Ensure user is authenticated and owns the record
+  const userId = c.get("decodedToken")?.id;
+  if (!userId) {
+    return c.json({ error: "User ID is required" }, 401);
+  }
 
   const existingEducation = await prisma.education.findUnique({
     where: { id: educationId },
@@ -197,6 +206,10 @@ edu.delete("/:id", async (c: Context) => {
     return c.json({ error: "Education not found" }, 404);
   }
 
+  if (existingEducation.userId !== userId) {
+    return c.json({ error: "Forbidden: You do not own this resource" }, 403);
+  }
+
   // Delete image from S3 if it's stored there
   if (
     existingEducation.img &&
@@ -204,7 +217,19 @@ edu.delete("/:id", async (c: Context) => {
   ) {
     try {
       const previousKey = existingEducation.img.split(".com/")[1];
-      await uploadToS3(new File([], ""), c, existingEducation.img); // Reusing the same function to delete the previous image
+      const s3 = new S3Client({
+        credentials: {
+          accessKeyId: c.env.AWS_ACCESS_KEY_ID,
+          secretAccessKey: c.env.AWS_SECRET_ACCESS_KEY,
+        },
+        region: c.env.AWS_REGION,
+      });
+      await s3.send(
+        new DeleteObjectCommand({
+          Bucket: c.env.AWS_BUCKET_NAME,
+          Key: previousKey,
+        })
+      );
     } catch (error) {
       console.error(`Failed to delete image: ${(error as Error).message}`);
     }
