@@ -99,13 +99,14 @@ edu.get("/:user_id", async (c: Context) => {
 });
 
 // Get Education by ID
-edu.get("/:id", async (c: Context) => {
+edu.get("/:user_id/:id", async (c: Context) => {
   const prisma = c.get("prisma");
-  const educationId = Number(c.req.param("id"));
+  const educationId = c.req.param("id");
+  const userId = c.req.param("user_id");
 
   try {
     const education = await prisma.education.findUnique({
-      where: { id: educationId },
+      where: { id: educationId, userId },
     });
 
     if (!education) {
