@@ -9,6 +9,7 @@ import { cors } from "hono/cors";
 import { verifyJWT } from "./lib/verify-token";
 import user from "./routes/user";
 import bio from "./routes/bio";
+import skills from "./routes/skill";
 
 type Bindings = {
   DATABASE_URL: string;
@@ -57,6 +58,8 @@ app.route("/api/project", pjt);
 app.route("/api/user", user);
 
 app.route("api/bio", bio);
+
+app.route("/api/skill", skills);
 
 app.onError((err, c) => {
   console.error(err.message);
