@@ -27,7 +27,20 @@ app.use(logger());
 // app.use("api/*", prisma()).basePath("api").route("/experiences", exp);
 
 app.use("api/*", prisma());
-app.use(cors({ credentials: true, origin: "http://localhost:3000" }));
+
+app.use("*", async (c, next) => {
+  const method = c.req.method;
+
+  if (method === "GET") {
+    return cors({ origin: "*", credentials: false })(c, next);
+  } else {
+    return cors({ origin: "http://localhost:3000", credentials: true })(
+      c,
+      next
+    );
+  }
+});
+
 // app.use("api/*", cors({ credentials: true, origin: "*" }));
 
 app.get("/", (c: Context) => {
@@ -49,17 +62,17 @@ app.notFound((c) => {
 
 app.use("/api/*", verifyJWT());
 
-app.route("/api/experience", exp);
+app.route("/api/experiences", exp);
 
 app.route("/api/education", edu);
 
-app.route("/api/project", pjt);
+app.route("/api/projects", pjt);
 
-app.route("/api/user", user);
+app.route("/api/users", user);
 
 app.route("api/bio", bio);
 
-app.route("/api/skill", skills);
+app.route("/api/skills", skills);
 
 app.onError((err, c) => {
   console.error(err.message);
