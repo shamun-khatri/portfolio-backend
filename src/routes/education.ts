@@ -62,7 +62,15 @@ edu.post("/", async (c: Context) => {
   }
   data["userId"] = userId; // Add userId to the data object
 
+  // Auto-assign position: put new item at the end (highest position + 1)
   try {
+    const highest = await prisma.education.findFirst({
+      where: { userId },
+      orderBy: { position: "desc" },
+    });
+    const nextPosition = highest && typeof highest.position === "number" ? highest.position + 1 : 1;
+    data["position"] = nextPosition;
+
     const savedEducation = await prisma.education.create({
       data,
     });
@@ -239,10 +247,62 @@ edu.delete("/:id", async (c: Context) => {
     await prisma.education.delete({
       where: { id: educationId },
     });
+    // Resequence remaining items for the user to keep positions contiguous
+    try {
+      const remaining = await prisma.education.findMany({
+        where: { userId: existingEducation.userId },
+        orderBy: { position: "asc" },
+      });
+
+      const updates = remaining.map((rec, idx) =>
+        prisma.education.update({ where: { id: rec.id }, data: { position: idx + 1 } })
+      );
+
+      if (updates.length > 0) await prisma.$transaction(updates);
+    } catch (err) {
+      console.error("Failed to resequence positions after delete:", err);
+    }
 
     return c.json({ message: "Education deleted successfully" }, 200);
   } catch (error) {
     return c.json({ error: (error as Error).message }, 500);
+  }
+});
+
+// Reorder educations for the authenticated user.
+// Expects JSON body: { order: ["eduId1","eduId2", ...] }
+edu.patch("/reorder", async (c: Context) => {
+  const prisma = c.get("prisma");
+  const userId = c.get("decodedToken")?.id;
+  if (!userId) return c.json({ error: "User ID is required" }, 401);
+
+  let body: any;
+  try {
+    body = await c.req.json();
+  } catch (err) {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const order = body?.order;
+  if (!Array.isArray(order) || order.length === 0)
+    return c.json({ error: "`order` must be a non-empty array of ids" }, 400);
+
+  // Ensure all provided ids belong to this user
+  const items = await prisma.education.findMany({ where: { id: { in: order }, userId } });
+  if (items.length !== order.length)
+    return c.json({ error: "One or more items not found or not owned by user" }, 403);
+
+  const updates = order.map((id: string, idx: number) =>
+    prisma.education.update({ where: { id }, data: { position: idx + 1 } })
+  );
+
+  try {
+    await prisma.$transaction(updates);
+    const updated = await prisma.education.findMany({ where: { userId }, orderBy: { position: "asc" } });
+    return c.json(updated, 200);
+  } catch (err) {
+    console.error("Failed to reorder educations:", err);
+    return c.json({ error: (err as Error).message }, 500);
   }
 });
 
