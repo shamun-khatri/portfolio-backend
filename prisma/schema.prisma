@@ -6,12 +6,11 @@
 
 generator client {
   provider        = "prisma-client-js"
-  previewFeatures = ["driverAdapters"]
+  previewFeatures = []
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -30,28 +29,30 @@ model User {
 }
 
 model Experience {
-  id      String   @id @default(cuid())
-  img     String
-  role    String
-  company String
-  date    String
-  desc    String
-  skills  String[]
-  doc     String?
-  userId  String
-  user    User     @relation(fields: [userId], references: [id])
+  id       String   @id @default(cuid())
+  img      String
+  role     String
+  company  String
+  date     String
+  desc     String
+  skills   String[]
+  doc      String?
+  userId   String
+  position Int
+  user     User     @relation(fields: [userId], references: [id])
 }
 
 model Education {
-  id     String @id @default(cuid())
-  img    String
-  school String
-  date   String
-  grade  String
-  desc   String
-  degree String
-  userId String
-  user   User   @relation(fields: [userId], references: [id])
+  id       String @id @default(cuid())
+  img      String
+  school   String
+  date     String
+  grade    String
+  desc     String
+  degree   String
+  userId   String
+  position Int
+  user     User   @relation(fields: [userId], references: [id])
 }
 
 model Project {
@@ -64,6 +65,7 @@ model Project {
   category    String
   github      String?
   projectUrl  String?
+  position    Int
   members     Member[]
   userId      String
   user        User     @relation(fields: [userId], references: [id])
