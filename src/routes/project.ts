@@ -51,13 +51,16 @@ pjt.post("/", async (c: Context) => {
     // });
 
     const projectId = cuid();
-    const { title, description, date, category, github, projectUrl } =
-      projectData;
+    const { title, description, date, category, github, projectUrl } = projectData;
 
-    // Single raw SQL query with CTE for both Project and Member insertions
+    // Determine next position for this user's projects
+    const highest = await prisma.project.findFirst({ where: { userId }, orderBy: { position: "desc" } });
+    const nextPosition = highest && typeof highest.position === "number" ? highest.position + 1 : 1;
+
+    // Single raw SQL query for Project insertion (include position)
     const savedProject = await prisma.$queryRaw`
-      INSERT INTO "Project" (id, title, description, image, date, category, github, "projectUrl", "userId")
-      VALUES (${projectId} ,${title}, ${description}, ${imageUrl}, ${date}, ${category}, ${github}, ${projectUrl}, ${userId})
+      INSERT INTO "Project" (id, title, description, image, date, category, github, "projectUrl", "userId", position)
+      VALUES (${projectId}, ${title}, ${description}, ${imageUrl}, ${date}, ${category}, ${github}, ${projectUrl}, ${userId}, ${nextPosition})
       RETURNING *;
     `;
 
@@ -109,6 +112,7 @@ pjt.get("/:user_id", async (c: Context) => {
     const projects = await prisma.project.findMany({
       where: { userId },
       include: { members: true }, // Include members in the response
+      orderBy: { position: "asc" },
     });
     return c.json(projects, 200);
   } catch (error) {
@@ -345,26 +349,23 @@ pjt.delete("/:id", async (c: Context) => {
   const projectId = Number(c.req.param("id"));
 
   try {
-    // First, delete all members associated with this project
-    await prisma.$executeRaw`
-      DELETE FROM "Member" WHERE "projectId" = ${projectId};
-    `;
+    // Use Prisma client to delete members and project, and resequence positions
+    const existing = await prisma.project.findUnique({ where: { id: projectId } });
+    if (!existing) return c.json({ error: "Project not found" }, 404);
 
-    // Then, delete the project itself
-    const deleteResult = await prisma.$executeRaw`
-      DELETE FROM "Project" WHERE id = ${projectId};
-    `;
+    await prisma.member.deleteMany({ where: { projectId } });
+    await prisma.project.delete({ where: { id: projectId } });
 
-    if (deleteResult.count === 0) {
-      return c.json({ error: "Project not found" }, 404);
+    // Resequence remaining projects for the user
+    try {
+      const remaining = await prisma.project.findMany({ where: { userId: existing.userId }, orderBy: { position: "asc" } });
+      const updates = remaining.map((rec: any, idx: any) => prisma.project.update({ where: { id: rec.id }, data: { position: idx + 1 } }));
+      if (updates.length > 0) await prisma.$transaction(updates);
+    } catch (err) {
+      console.error("Failed to resequence projects after delete:", err);
     }
 
-    return c.json(
-      {
-        message: `Project with ID ${projectId} and its members have been deleted.`,
-      },
-      200
-    );
+    return c.json({ message: `Project with ID ${projectId} and its members have been deleted.` }, 200);
   } catch (error) {
     return c.json(
       { error: `Failed to delete project: ${(error as Error).message}` },
@@ -397,6 +398,39 @@ pjt.delete("/", async (c: Context) => {
       { error: `Failed to delete all projects: ${(error as Error).message}` },
       500
     );
+  }
+});
+
+// Reorder projects for the authenticated user.
+// Expects JSON body: { order: ["projId1","projId2", ...] }
+pjt.patch("/reorder", async (c: Context) => {
+  const prisma = c.get("prisma");
+  const userId = c.get("decodedToken")?.id;
+  if (!userId) return c.json({ error: "User ID is required" }, 401);
+
+  let body: any;
+  try {
+    body = await c.req.json();
+  } catch (err) {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const order = body?.order;
+  if (!Array.isArray(order) || order.length === 0) return c.json({ error: "`order` must be a non-empty array of ids" }, 400);
+
+  // Ensure all provided ids belong to this user
+  const items = await prisma.project.findMany({ where: { id: { in: order }, userId } });
+  if (items.length !== order.length) return c.json({ error: "One or more items not found or not owned by user" }, 403);
+
+  const updates = order.map((id: string, idx: number) => prisma.project.update({ where: { id }, data: { position: idx + 1 } }));
+
+  try {
+    await prisma.$transaction(updates);
+    const updated = await prisma.project.findMany({ where: { userId }, orderBy: { position: "asc" }, include: { members: true } });
+    return c.json(updated, 200);
+  } catch (err) {
+    console.error("Failed to reorder projects:", err);
+    return c.json({ error: (err as Error).message }, 500);
   }
 });
 
