@@ -254,7 +254,7 @@ edu.delete("/:id", async (c: Context) => {
         orderBy: { position: "asc" },
       });
 
-      const updates = remaining.map((rec, idx) =>
+      const updates = remaining.map((rec: any, idx: any) =>
         prisma.education.update({ where: { id: rec.id }, data: { position: idx + 1 } })
       );
 
