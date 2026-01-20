@@ -160,6 +160,7 @@ exp.get("/:user_id", async (c: Context) => {
 
   const experiences = await prisma.experience.findMany({
     where: { userId },
+    orderBy: { position: "asc" },
   });
   return c.json(experiences, 200);
 });
@@ -266,8 +267,9 @@ exp.put("/:id", async (c: Context) => {
   if (newImageUrl) {
     data["img"] = newImageUrl;
   }
-  // Never allow changing ownership via update
+  // Never allow changing ownership or position via update
   if ("userId" in data) delete (data as Record<string, unknown>)["userId"];
+  if ("position" in data) delete (data as Record<string, unknown>)["position"];
 
   try {
     const updatedExperience = await prisma.experience.update({
@@ -284,22 +286,76 @@ exp.put("/:id", async (c: Context) => {
 // Delete an experience
 exp.delete("/:id", async (c: Context) => {
   const prisma = c.get("prisma");
-
   const experienceId = c.req.param("id");
-  const deletedExperience = await prisma.experience.delete({ where: { id: experienceId } });
 
-  if (!deletedExperience) return c.json({ error: "Experience not found" }, 404);
-
-  // Resequence remaining items for the user to keep positions contiguous
-  try {
-    const remaining = await prisma.experience.findMany({ where: { userId: deletedExperience.userId }, orderBy: { position: "asc" } });
-    const updates = remaining.map((rec: any, idx: any) => prisma.experience.update({ where: { id: rec.id }, data: { position: idx + 1 } }));
-    if (updates.length > 0) await prisma.$transaction(updates);
-  } catch (err) {
-    console.error("Failed to resequence positions after delete:", err);
+  // Auth check
+  const userId = c.get("decodedToken")?.id;
+  if (!userId) {
+    return c.json({ error: "User ID is required" }, 401);
   }
 
-  return c.json({ message: "Experience deleted successfully" }, 200);
+  const existingExperience = await prisma.experience.findUnique({
+    where: { id: experienceId },
+  });
+
+  if (!existingExperience) {
+    return c.json({ error: "Experience not found" }, 404);
+  }
+
+  // Ownership check
+  if (existingExperience.userId !== userId) {
+    return c.json({ error: "Forbidden: You do not own this resource" }, 403);
+  }
+
+  // Delete image from S3 if it's stored there
+  if (
+    existingExperience.img &&
+    existingExperience.img.startsWith(`https://${c.env.AWS_BUCKET_NAME}.s3.`)
+  ) {
+    try {
+      const previousKey = existingExperience.img.split(".com/")[1];
+      const s3 = new S3Client({
+        credentials: {
+          accessKeyId: c.env.AWS_ACCESS_KEY_ID,
+          secretAccessKey: c.env.AWS_SECRET_ACCESS_KEY,
+        },
+        region: c.env.AWS_REGION,
+      });
+      await s3.send(
+        new DeleteObjectCommand({
+          Bucket: c.env.AWS_BUCKET_NAME,
+          Key: previousKey,
+        })
+      );
+    } catch (error) {
+      console.error(`Failed to delete image: ${(error as Error).message}`);
+    }
+  }
+
+  try {
+    await prisma.experience.delete({ where: { id: experienceId } });
+
+    // Resequence remaining items for the user to keep positions contiguous
+    try {
+      const remaining = await prisma.experience.findMany({
+        where: { userId },
+        orderBy: { position: "asc" },
+      });
+      const updates = remaining.map((rec: any, idx: any) =>
+        prisma.experience.update({
+          where: { id: rec.id },
+          data: { position: idx + 1 },
+        })
+      );
+      if (updates.length > 0) await Promise.all(updates);
+    } catch (err) {
+      console.error("Failed to resequence positions after delete:", err);
+    }
+
+    return c.json({ message: "Experience deleted successfully" }, 200);
+  } catch (error) {
+    return c.json({ error: (error as Error).message }, 500);
+  }
 });
 
 // Reorder experiences for the authenticated user.
@@ -326,7 +382,7 @@ exp.patch("/reorder", async (c: Context) => {
   const updates = order.map((id: string, idx: number) => prisma.experience.update({ where: { id }, data: { position: idx + 1 } }));
 
   try {
-    await prisma.$transaction(updates);
+    await Promise.all(updates);
     const updated = await prisma.experience.findMany({ where: { userId }, orderBy: { position: "asc" } });
     return c.json(updated, 200);
   } catch (err) {

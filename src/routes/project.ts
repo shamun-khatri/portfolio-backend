@@ -245,12 +245,21 @@ pjt.put("/:id", async (c: Context) => {
   const prisma = c.get("prisma");
   const projectId = c.req.param("id"); // cuid string
 
-  // Ensure project exists
+  // Auth check
+  const userId = c.get("decodedToken")?.id;
+  if (!userId) {
+    return c.json({ error: "User ID is required" }, 401);
+  }
+
+  // Ensure project exists and belongs to user
   const existing = await prisma.project.findUnique({
     where: { id: projectId },
     include: { members: true },
   });
   if (!existing) return c.json({ error: "Project not found" }, 404);
+  if (existing.userId !== userId) {
+    return c.json({ error: "Forbidden: You do not own this resource" }, 403);
+  }
 
   const formData = await c.req.formData();
   console.log("Form Data:", formData);
@@ -346,26 +355,77 @@ pjt.put("/:id", async (c: Context) => {
 // Delete a project by ID
 pjt.delete("/:id", async (c: Context) => {
   const prisma = c.get("prisma");
-  const projectId = Number(c.req.param("id"));
+  const projectId = c.req.param("id");
+
+  // Auth check
+  const userId = c.get("decodedToken")?.id;
+  if (!userId) {
+    return c.json({ error: "User ID is required" }, 401);
+  }
 
   try {
     // Use Prisma client to delete members and project, and resequence positions
-    const existing = await prisma.project.findUnique({ where: { id: projectId } });
+    const existing = await prisma.project.findUnique({
+      where: { id: projectId },
+    });
     if (!existing) return c.json({ error: "Project not found" }, 404);
+
+    // Ownership check
+    if (existing.userId !== userId) {
+      return c.json({ error: "Forbidden: You do not own this resource" }, 403);
+    }
+
+    // Delete image from S3 if it's stored there
+    if (
+      existing.image &&
+      existing.image.startsWith(`https://${c.env.AWS_BUCKET_NAME}.s3.`)
+    ) {
+      try {
+        const previousKey = existing.image.split(".com/")[1];
+        const s3 = new S3Client({
+          credentials: {
+            accessKeyId: c.env.AWS_ACCESS_KEY_ID,
+            secretAccessKey: c.env.AWS_SECRET_ACCESS_KEY,
+          },
+          region: c.env.AWS_REGION,
+        });
+        await s3.send(
+          new DeleteObjectCommand({
+            Bucket: c.env.AWS_BUCKET_NAME,
+            Key: previousKey,
+          })
+        );
+      } catch (error) {
+        console.error(`Failed to delete image: ${(error as Error).message}`);
+      }
+    }
 
     await prisma.member.deleteMany({ where: { projectId } });
     await prisma.project.delete({ where: { id: projectId } });
 
     // Resequence remaining projects for the user
     try {
-      const remaining = await prisma.project.findMany({ where: { userId: existing.userId }, orderBy: { position: "asc" } });
-      const updates = remaining.map((rec: any, idx: any) => prisma.project.update({ where: { id: rec.id }, data: { position: idx + 1 } }));
-      if (updates.length > 0) await prisma.$transaction(updates);
+      const remaining = await prisma.project.findMany({
+        where: { userId },
+        orderBy: { position: "asc" },
+      });
+      const updates = remaining.map((rec: any, idx: any) =>
+        prisma.project.update({
+          where: { id: rec.id },
+          data: { position: idx + 1 },
+        })
+      );
+      if (updates.length > 0) await Promise.all(updates);
     } catch (err) {
       console.error("Failed to resequence projects after delete:", err);
     }
 
-    return c.json({ message: `Project with ID ${projectId} and its members have been deleted.` }, 200);
+    return c.json(
+      {
+        message: `Project with ID ${projectId} and its members have been deleted.`,
+      },
+      200
+    );
   } catch (error) {
     return c.json(
       { error: `Failed to delete project: ${(error as Error).message}` },
@@ -374,23 +434,58 @@ pjt.delete("/:id", async (c: Context) => {
   }
 });
 
-// Delete all projects
+// Delete all projects for authenticated user
 pjt.delete("/", async (c: Context) => {
   const prisma = c.get("prisma");
 
-  try {
-    // First, delete all members associated with projects
-    await prisma.$executeRaw`
-      DELETE FROM "Member";
-    `;
+  // Auth check
+  const userId = c.get("decodedToken")?.id;
+  if (!userId) {
+    return c.json({ error: "User ID is required" }, 401);
+  }
 
-    // Then, delete all projects
-    await prisma.$executeRaw`
-      DELETE FROM "Project";
-    `;
+  try {
+    // Find all projects for this user to delete their images and members first
+    const userProjects = await prisma.project.findMany({
+      where: { userId },
+      select: { id: true, image: true },
+    });
+    const projectIds = userProjects.map((p) => p.id);
+
+    if (projectIds.length > 0) {
+      // 1. Delete images from S3
+      const s3 = new S3Client({
+        credentials: {
+          accessKeyId: c.env.AWS_ACCESS_KEY_ID,
+          secretAccessKey: c.env.AWS_SECRET_ACCESS_KEY,
+        },
+        region: c.env.AWS_REGION,
+      });
+
+      for (const p of userProjects) {
+        if (p.image && p.image.startsWith(`https://${c.env.AWS_BUCKET_NAME}.s3.`)) {
+          try {
+            const key = p.image.split(".com/")[1];
+            await s3.send(new DeleteObjectCommand({ Bucket: c.env.AWS_BUCKET_NAME, Key: key }));
+          } catch (e) {
+            console.error(`Failed to delete image for project ${p.id}:`, e);
+          }
+        }
+      }
+
+      // 2. Delete members
+      await prisma.member.deleteMany({
+        where: { projectId: { in: projectIds } },
+      });
+
+      // 3. Delete projects
+      await prisma.project.deleteMany({
+        where: { userId },
+      });
+    }
 
     return c.json(
-      { message: "All projects and their members have been deleted." },
+      { message: "All your projects and their members have been deleted." },
       200
     );
   } catch (error) {
@@ -425,7 +520,7 @@ pjt.patch("/reorder", async (c: Context) => {
   const updates = order.map((id: string, idx: number) => prisma.project.update({ where: { id }, data: { position: idx + 1 } }));
 
   try {
-    await prisma.$transaction(updates);
+    await Promise.all(updates);
     const updated = await prisma.project.findMany({ where: { userId }, orderBy: { position: "asc" }, include: { members: true } });
     return c.json(updated, 200);
   } catch (err) {

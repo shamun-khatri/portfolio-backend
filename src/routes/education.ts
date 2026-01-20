@@ -94,6 +94,7 @@ edu.get("/:user_id", async (c: Context) => {
   try {
     const educationRecords = await prisma.education.findMany({
       where: { userId },
+      orderBy: { position: "asc" },
     });
 
     if (educationRecords.length === 0) {
@@ -180,8 +181,9 @@ edu.put("/:id", async (c: Context) => {
     data[key] = value;
   }
   if (newImageUrl) data["img"] = newImageUrl;
-  // Never allow changing ownership via update
+  // Never allow changing ownership or position via update
   if ("userId" in data) delete (data as Record<string, unknown>)["userId"];
+  if ("position" in data) delete (data as Record<string, unknown>)["position"];
 
   try {
     const updatedEducation = await prisma.education.update({
@@ -258,7 +260,7 @@ edu.delete("/:id", async (c: Context) => {
         prisma.education.update({ where: { id: rec.id }, data: { position: idx + 1 } })
       );
 
-      if (updates.length > 0) await prisma.$transaction(updates);
+      if (updates.length > 0) await Promise.all(updates);
     } catch (err) {
       console.error("Failed to resequence positions after delete:", err);
     }
@@ -297,7 +299,7 @@ edu.patch("/reorder", async (c: Context) => {
   );
 
   try {
-    await prisma.$transaction(updates);
+    await Promise.all(updates);
     const updated = await prisma.education.findMany({ where: { userId }, orderBy: { position: "asc" } });
     return c.json(updated, 200);
   } catch (err) {
