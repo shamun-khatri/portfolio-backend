@@ -36,6 +36,34 @@ function jsonToFormData(jsonObject) {
   return formData;
 }
 
+const parseSkillsFromFormData = (formData: FormData): string[] => {
+  const raw = formData.getAll("skills[]");
+  const fallback = raw.length ? raw : formData.getAll("skills");
+  if (fallback.length > 1) {
+    return fallback
+      .map((t) => (typeof t === "string" ? t : ""))
+      .map((t) => t.trim())
+      .filter(Boolean);
+  }
+
+  const single = fallback[0];
+  if (typeof single === "string") {
+    const trimmed = single.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return parsed.map((s) => String(s).trim()).filter(Boolean);
+      } catch {
+        // fall through to comma parsing
+      }
+    }
+    return trimmed.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+
+  return [];
+};
+
 // Create a new experience
 exp.post("/", async (c: Context) => {
   const prisma = c.get("prisma");
@@ -72,15 +100,16 @@ exp.post("/", async (c: Context) => {
     formData = await c.req.formData();
     img = formData.get("img");
 
-    // Convert skills[] to an array
-    const skillsRaw = formData.get("skills");
-    skills = skillsRaw ? JSON.parse(skillsRaw.toString()) : [];
+    // Convert skills[]/skills to an array
+    skills = parseSkillsFromFormData(formData);
   } else {
     return c.json({ error: "Unsupported Content-Type" }, 415);
   }
 
   if (!(img instanceof File)) {
     const data = Object.fromEntries(formData.entries());
+    delete data["skills[]"];
+    delete data["skills"];
     try {
       // Auto-assign position for new experience
       const highest = await prisma.experience.findFirst({ where: { userId }, orderBy: { position: "desc" } });
@@ -120,6 +149,7 @@ exp.post("/", async (c: Context) => {
       formData.set("img", imageUrl);
       const data = Object.fromEntries(formData.entries());
       delete data["skills[]"];
+      delete data["skills"];
       try {
         // Auto-assign position for new experience
         const highest = await prisma.experience.findFirst({ where: { userId }, orderBy: { position: "desc" } });
@@ -194,6 +224,12 @@ exp.put("/:id", async (c: Context) => {
   const formData = await c.req.formData();
   const img = formData.get("img");
 
+  const hasSkills =
+    formData.getAll("skills[]").length > 0 ||
+    formData.getAll("skills").length > 0 ||
+    formData.get("skills") != null;
+  const skills = hasSkills ? parseSkillsFromFormData(formData) : null;
+
   const experienceId = c.req.param("id");
   const existingExperience = await prisma.experience.findUnique({
     where: { id: experienceId },
@@ -264,12 +300,21 @@ exp.put("/:id", async (c: Context) => {
     data[key] = value;
   }
 
+  // Remove raw skills fields; we'll set normalized skills below
+  if ("skills[]" in data) delete (data as Record<string, unknown>)["skills[]"];
+  if ("skills" in data) delete (data as Record<string, unknown>)["skills"];
+
   if (newImageUrl) {
     data["img"] = newImageUrl;
   }
   // Never allow changing ownership or position via update
   if ("userId" in data) delete (data as Record<string, unknown>)["userId"];
   if ("position" in data) delete (data as Record<string, unknown>)["position"];
+
+  // Apply skills only when explicitly provided in the form (allow clearing)
+  if (hasSkills) {
+    data["skills"] = skills ?? [];
+  }
 
   try {
     const updatedExperience = await prisma.experience.update({
