@@ -9,6 +9,39 @@ import cuid from "cuid";
 
 const pjt = new Hono();
 
+const parseTagsFromFormData = (formData: FormData): string[] => {
+  const rawTags = formData.getAll("tags[]");
+  const fallback = rawTags.length ? rawTags : formData.getAll("tags");
+  if (fallback.length > 1) {
+    return fallback
+      .map((t) => (typeof t === "string" ? t : ""))
+      .map((t) => t.trim())
+      .filter(Boolean);
+  }
+
+  const single = fallback[0];
+  if (typeof single === "string") {
+    const trimmed = single.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed.map((t) => String(t).trim()).filter(Boolean);
+        }
+      } catch {
+        // fall through to comma parsing
+      }
+    }
+    return trimmed
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+};
+
 // Create a new project
 pjt.post("/", async (c: Context) => {
   const prisma = c.get("prisma");
@@ -33,9 +66,12 @@ pjt.post("/", async (c: Context) => {
 
   const membersData = formData.get("member");
   const members = membersData ? JSON.parse(membersData.toString()) : [];
+  const tags = parseTagsFromFormData(formData);
 
   const projectData = Object.fromEntries(formData.entries());
   delete projectData["member"];
+  delete projectData["tags[]"];
+  delete projectData["tags"];
   console.log("projectData", projectData);
   console.log("members", members);
   console.log("type of members", typeof members);
@@ -59,8 +95,8 @@ pjt.post("/", async (c: Context) => {
 
     // Single raw SQL query for Project insertion (include position)
     const savedProject = await prisma.$queryRaw`
-      INSERT INTO "Project" (id, title, description, image, date, category, github, "projectUrl", "userId", position)
-      VALUES (${projectId}, ${title}, ${description}, ${imageUrl}, ${date}, ${category}, ${github}, ${projectUrl}, ${userId}, ${nextPosition})
+      INSERT INTO "Project" (id, title, description, image, date, tags, category, github, "projectUrl", "userId", position)
+      VALUES (${projectId}, ${title}, ${description}, ${imageUrl}, ${date}, ${tags}, ${category}, ${github}, ${projectUrl}, ${userId}, ${nextPosition})
       RETURNING *;
     `;
 
@@ -274,6 +310,10 @@ pjt.put("/:id", async (c: Context) => {
 
   const membersRaw = formData.get("member");
   const incomingMembers = membersRaw ? JSON.parse(membersRaw.toString()) : [];
+  const hasTags =
+    formData.getAll("tags[]").length > 0 ||
+    formData.getAll("tags").length > 0;
+  const tags = hasTags ? parseTagsFromFormData(formData) : null;
 
   // Build partial update data safely
   const data: any = {};
@@ -289,6 +329,7 @@ pjt.put("/:id", async (c: Context) => {
     const v = formData.get(f);
     if (typeof v === "string" && v.trim() !== "") data[f] = v;
   }
+  if (hasTags) data.tags = tags ?? [];
   if (imageUrl) data.image = imageUrl;
 
   // Update project (if there is at least one field to change)
