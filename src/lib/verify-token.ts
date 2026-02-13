@@ -5,10 +5,7 @@ import { decode } from "next-auth/jwt";
 export const verifyJWT = (): MiddlewareHandler =>
   createMiddleware<Env>(async (c: Context, next: any) => {
     const secret = c.env.NEXTAUTH_SECRET;
-    // Skip JWT verification for GET requests
-    if (c.req.method === "GET") {
-      return await next();
-    } else if (c.req.method === "POST" && c.req.path === "/api/user") {
+    if (c.req.method === "POST" && c.req.path === "/api/user") {
       await next();
     }
 
@@ -21,6 +18,9 @@ export const verifyJWT = (): MiddlewareHandler =>
 
     // const token = c.req.header("Authorization")?.split(" ")[1]; // Extract token from Bearer Authorization header
     if (!token) {
+      if (c.req.method === "GET") {
+        return await next();
+      }
       return c.json({ error: "No token provided" }, 401);
     }
 
@@ -32,6 +32,9 @@ export const verifyJWT = (): MiddlewareHandler =>
       });
 
       if (!decoded) {
+        if (c.req.method === "GET") {
+          return await next();
+        }
         return c.json({ error: "Invalid token" }, 401);
       }
       // You can store the decoded token in the context
@@ -41,6 +44,9 @@ export const verifyJWT = (): MiddlewareHandler =>
       await next();
     } catch (error) {
       console.error("Error decoding token:", error);
+      if (c.req.method === "GET") {
+        return await next();
+      }
       return c.json({ error: "Error decoding token" }, 401);
     }
   });

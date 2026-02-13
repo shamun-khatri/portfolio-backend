@@ -6,6 +6,10 @@ import {
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import uploadToS3 from "../lib/upload-to-s3";
+import {
+  filterMetadataBySchema,
+  EDUCATION_FIELD_SCHEMA,
+} from "../lib/custom-fields";
 
 const edu = new Hono();
 
@@ -55,24 +59,47 @@ edu.post("/", async (c: Context) => {
     return c.json({ error: "Unsupported Content-Type" }, 415);
   }
 
-  // Convert formData to a plain object safely (avoid TS lib mismatch on FormData.entries)
+  // Convert formData to a plain object safely
   const data: Record<string, any> = {};
-  for (const [key, value] of (formData as any)) {
-    data[key] = value;
-  }
-  data["userId"] = userId; // Add userId to the data object
+  const metadata: Record<string, any> = {};
 
-  // Auto-assign position: put new item at the end (highest position + 1)
+  for (const [key, value] of (formData as any)) {
+    if (key.startsWith("metadata.")) {
+      const fieldKey = key.replace("metadata.", "");
+      metadata[fieldKey] = value;
+    } else {
+      data[key] = value;
+    }
+  }
+
+  data["userId"] = userId;
+  if (Object.keys(metadata).length > 0) {
+    data["metadata"] = metadata;
+  }
+
+  // Auto-assign position
   try {
     const highest = await prisma.education.findFirst({
       where: { userId },
       orderBy: { position: "desc" },
     });
-    const nextPosition = highest && typeof highest.position === "number" ? highest.position + 1 : 1;
-    data["position"] = nextPosition;
+    const nextPosition =
+      highest && typeof highest.position === "number"
+        ? highest.position + 1
+        : 1;
 
     const savedEducation = await prisma.education.create({
-      data,
+      data: {
+        school: data.school,
+        degree: data.degree,
+        date: data.date,
+        grade: data.grade,
+        desc: data.desc,
+        img: data.img,
+        userId: data.userId,
+        position: nextPosition,
+        metadata: data.metadata,
+      },
     });
     return c.json(savedEducation, 201);
   } catch (error) {
@@ -91,6 +118,9 @@ edu.get("/:user_id", async (c: Context) => {
     return c.json({ error: "User ID is required" }, 400);
   }
 
+  const decodedToken = c.get("decodedToken");
+  const isOwner = decodedToken && decodedToken.id === userId;
+
   try {
     const educationRecords = await prisma.education.findMany({
       where: { userId },
@@ -98,13 +128,19 @@ edu.get("/:user_id", async (c: Context) => {
     });
 
     if (educationRecords.length === 0) {
-      return c.json(
-        { message: "No education records found for this user" },
-        404
-      );
+      return c.json({ message: "No education records found for this user" }, 404);
     }
 
-    return c.json(educationRecords, 200);
+    const sanitizedRecords = educationRecords.map((edu: any) => ({
+      ...edu,
+      metadata: filterMetadataBySchema(
+        edu.metadata,
+        EDUCATION_FIELD_SCHEMA,
+        isOwner
+      ),
+    }));
+
+    return c.json(sanitizedRecords, 200);
   } catch (error) {
     console.error("Error fetching education records:", error);
     return c.json({ error: (error as Error).message }, 500);
@@ -177,13 +213,25 @@ edu.put("/:id", async (c: Context) => {
 
   // Convert formData to a plain object safely
   const data: Record<string, any> = {};
+  const metadata: Record<string, any> = {};
+
   for (const [key, value] of (formData as any)) {
-    data[key] = value;
+    if (key.startsWith("metadata.")) {
+      const fieldKey = key.replace("metadata.", "");
+      metadata[fieldKey] = value;
+    } else {
+      data[key] = value;
+    }
   }
+
   if (newImageUrl) data["img"] = newImageUrl;
   // Never allow changing ownership or position via update
   if ("userId" in data) delete (data as Record<string, unknown>)["userId"];
   if ("position" in data) delete (data as Record<string, unknown>)["position"];
+
+  if (Object.keys(metadata).length > 0) {
+    data["metadata"] = metadata;
+  }
 
   try {
     const updatedEducation = await prisma.education.update({

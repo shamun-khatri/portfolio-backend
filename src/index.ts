@@ -11,6 +11,7 @@ import user from "./routes/user";
 import bio from "./routes/bio";
 import skills from "./routes/skill";
 import { cacheLong, cacheMedium } from "./lib/cache-middleware";
+import customEntities from "./routes/custom-entity";
 
 type Bindings = {
   DATABASE_URL: string;
@@ -82,6 +83,7 @@ app.route("/api/projects", pjt);
 app.route("/api/users", user);
 app.route("/api/bio", bio);
 app.route("/api/skills", skills);
+app.route("/api", customEntities); // Custom entity routes (mounted at /api)
 
 app.onError((err, c) => {
   console.error(err.message);

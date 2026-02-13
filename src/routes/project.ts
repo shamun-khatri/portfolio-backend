@@ -5,6 +5,12 @@ import {
 } from "@aws-sdk/client-s3";
 import cuid from "cuid";
 import uploadToS3 from "../lib/upload-to-s3";
+import {
+  parseMetadata,
+  sanitizeMetadata,
+  filterMetadataBySchema,
+  PROJECT_FIELD_SCHEMA,
+} from "../lib/custom-fields";
 
 const pjt = new Hono();
 
@@ -107,34 +113,51 @@ pjt.post("/", async (c: Context) => {
     // });
 
     const projectId = cuid();
-    const { title, description, date, category, github, projectUrl } = projectData;
+  const { title, description, date, category, github, projectUrl } = projectData;
 
     // Determine next position for this user's projects
-    const highest = await prisma.project.findFirst({ where: { userId }, orderBy: { position: "desc" } });
-    const nextPosition = highest && typeof highest.position === "number" ? highest.position + 1 : 1;
+    const highest = await prisma.project.findFirst({
+      where: { userId },
+      orderBy: { position: "desc" },
+    });
+    const nextPosition =
+      highest && typeof highest.position === "number"
+        ? highest.position + 1
+        : 1;
 
-    // Single raw SQL query for Project insertion (include position)
+    const metadata = parseMetadata(formData, PROJECT_FIELD_SCHEMA);
+    const sanitizedMetadata = sanitizeMetadata(metadata);
+
+    // Single raw SQL query for Project insertion (include position and metadata)
     const savedProject = await prisma.$queryRaw`
-      INSERT INTO "Project" (id, title, description, image, date, tags, category, github, "projectUrl", "userId", position)
-      VALUES (${projectId}, ${title}, ${description}, ${imageUrl}, ${date}, ${tags}, ${category}, ${github}, ${projectUrl}, ${userId}, ${nextPosition})
+      INSERT INTO "Project" (id, title, description, image, date, tags, category, github, "projectUrl", "userId", position, metadata)
+      VALUES (${projectId}, ${title}, ${description}, ${imageUrl}, ${date}, ${tags}, ${category}, ${github}, ${projectUrl}, ${userId}, ${nextPosition}, ${sanitizedMetadata})
       RETURNING *;
     `;
 
-    // const projectId = savedProject[0].id; // Get the newly created project's ID
-
     // Insert members if the array is not empty
     if (members.length > 0) {
-      // Add unique IDs to each member
-      const membersWithIds = members.map((member: { id?: string; name: string; img?: string; linkedin?: string; github?: string }) => ({
-        id: cuid(),
-        ...member,
-      }));
+      // Add unique IDs to each member and ensure metadata is included
+      const membersWithIds = members.map(
+        (member: {
+          id?: string;
+          name: string;
+          img?: string;
+          linkedin?: string;
+          github?: string;
+          metadata?: any;
+        }) => ({
+          id: cuid(),
+          ...member,
+          metadata: member.metadata ? JSON.stringify(member.metadata) : null,
+        })
+      );
 
       await prisma.$queryRaw`
-        INSERT INTO "Member" (id, name, img, linkedin, github, "projectId")
-        SELECT members.id, members.name, members.img, members.linkedin, members.github, ${projectId}
+        INSERT INTO "Member" (id, name, img, linkedin, github, "projectId", metadata)
+        SELECT members.id, members.name, members.img, members.linkedin, members.github, ${projectId}, members.metadata::jsonb
         FROM jsonb_to_recordset(${JSON.stringify(membersWithIds)}::jsonb)
-        AS members(id text, name text, img text, linkedin text, github text);
+        AS members(id text, name text, img text, linkedin text, github text, metadata text);
       `;
     }
 
@@ -164,13 +187,30 @@ pjt.get("/:user_id", async (c: Context) => {
     return c.json({ error: "User ID is required" }, 400);
   }
 
+  const decodedToken = c.get("decodedToken");
+  const isOwner = decodedToken && decodedToken.id === userId;
+
   try {
     const projects = await prisma.project.findMany({
       where: { userId },
       include: { members: true }, // Include members in the response
       orderBy: { position: "asc" },
     });
-    return c.json(projects, 200);
+
+    const sanitizedProjects = projects.map((p: any) => ({
+      ...p,
+      metadata: filterMetadataBySchema(
+        p.metadata,
+        PROJECT_FIELD_SCHEMA,
+        isOwner
+      ),
+      members: p.members.map((m: any) => ({
+        ...m,
+        metadata: filterMetadataBySchema(m.metadata, [], isOwner),
+      })),
+    }));
+
+    return c.json(sanitizedProjects, 200);
   } catch (error) {
     return c.json(
       { error: `Failed to fetch projects: ${(error as Error).message}` },
@@ -195,7 +235,23 @@ pjt.get("/id/:id", async (c: Context) => {
       return c.json({ error: "Project not found" }, 404);
     }
 
-    return c.json(project, 200);
+    const decodedToken = c.get("decodedToken");
+    const isOwner = decodedToken && decodedToken.id === project.userId;
+
+    const sanitizedProject = {
+      ...project,
+      metadata: filterMetadataBySchema(
+        project.metadata,
+        PROJECT_FIELD_SCHEMA,
+        isOwner
+      ),
+      members: project.members.map((m: any) => ({
+        ...m,
+        metadata: filterMetadataBySchema(m.metadata, [], isOwner),
+      })),
+    };
+
+    return c.json(sanitizedProject, 200);
   } catch (error) {
     return c.json(
       { error: `Failed to fetch project: ${(error as Error).message}` },
@@ -360,6 +416,12 @@ pjt.put("/:id", async (c: Context) => {
   if (hasTags) data.tags = tags ?? [];
   if (imageUrl) data.image = imageUrl;
 
+  const metadata = parseMetadata(formData, PROJECT_FIELD_SCHEMA);
+  const sanitizedMetadata = sanitizeMetadata(metadata);
+  if (Object.keys(sanitizedMetadata).length > 0) {
+    data.metadata = sanitizedMetadata;
+  }
+
   // Update project (if there is at least one field to change)
   let updatedProject;
   if (Object.keys(data).length > 0) {
@@ -373,13 +435,19 @@ pjt.put("/:id", async (c: Context) => {
 
   // Sync members (create / update / delete removed)
   if (Array.isArray(incomingMembers)) {
-    const existingIds = new Set<string>(existing.members.map((m: { id: string }) => m.id));
+    const existingIds = new Set<string>(
+      existing.members.map((m: { id: string }) => m.id)
+    );
     const incomingIds = new Set<string>(
-      incomingMembers.filter((m: MemberInput) => m.id).map((m: MemberInput) => m.id!)
+      incomingMembers
+        .filter((m: MemberInput) => m.id)
+        .map((m: MemberInput) => m.id!)
     );
 
     // Delete members that were removed
-    const toDelete = [...existingIds].filter((id: string) => !incomingIds.has(id));
+    const toDelete = [...existingIds].filter(
+      (id: string) => !incomingIds.has(id)
+    );
     if (toDelete.length) {
       await prisma.member.deleteMany({
         where: { id: { in: toDelete }, projectId },
@@ -396,6 +464,7 @@ pjt.put("/:id", async (c: Context) => {
             img: m.img,
             linkedin: m.linkedin,
             github: m.github,
+            metadata: (m as any).metadata || undefined,
           },
         });
       } else {
@@ -406,6 +475,7 @@ pjt.put("/:id", async (c: Context) => {
             linkedin: m.linkedin,
             github: m.github,
             projectId,
+            metadata: (m as any).metadata || undefined,
           },
         });
       }

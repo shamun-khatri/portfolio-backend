@@ -26,33 +26,46 @@ model User {
   updatedAt   DateTime     @updatedAt
   Bio         Bio[]
   Skill       Skill[]
+
+  // User-defined custom entity types (e.g., "Case Studies", "Clients")
+  customEntityTypes CustomEntityType[]
 }
 
+// ============================================
+// CORE ENTITIES (with metadata support)
+// ============================================
+
 model Experience {
-  id       String   @id @default(cuid())
-  img      String
-  role     String
-  company  String
-  date     String
-  desc     String
-  skills   String[]
-  doc      String?
-  userId   String
-  position Int
-  user     User     @relation(fields: [userId], references: [id])
+  id        String   @id @default(cuid())
+  img       String
+  role      String
+  company   String
+  date      String
+  desc      String
+  skills    String[]
+  doc       String?
+  userId    String
+  position  Int
+  user      User     @relation(fields: [userId], references: [id])
+  metadata  Json? // Custom fields: { location: "Remote", type: "Full-time", salaryRange: "$100k-$150k" }
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Education {
-  id       String @id @default(cuid())
-  img      String
-  school   String
-  date     String
-  grade    String
-  desc     String
-  degree   String
-  userId   String
-  position Int
-  user     User   @relation(fields: [userId], references: [id])
+  id        String   @id @default(cuid())
+  img       String
+  school    String
+  date      String
+  grade     String
+  desc      String
+  degree    String
+  userId    String
+  position  Int
+  user      User     @relation(fields: [userId], references: [id])
+  metadata  Json? // Custom fields for education
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Project {
@@ -69,25 +82,34 @@ model Project {
   members     Member[]
   userId      String
   user        User     @relation(fields: [userId], references: [id])
+  metadata    Json? // Custom fields for projects
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Member {
-  id        String  @id @default(cuid())
+  id        String   @id @default(cuid())
   name      String
   img       String?
   linkedin  String?
   github    String?
   projectId String
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  metadata  Json? // Custom fields for team members
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Skill {
-  id       String @id @default(cuid())
-  name     String
-  icon     String
-  category String
-  userId   String
-  user     User   @relation(fields: [userId], references: [id])
+  id        String   @id @default(cuid())
+  name      String
+  icon      String
+  category  String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  metadata  Json? // Custom fields for skills (proficiency level, years of experience, etc.)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Bio {
@@ -99,4 +121,110 @@ model Bio {
   resumeUrl    String?
   userId       String   @unique
   user         User     @relation(fields: [userId], references: [id])
+  metadata     Json? // Custom fields for bio (social links, availability, etc.)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ============================================
+// DYNAMIC CUSTOM ENTITY SYSTEM
+// User can create their own entity types
+// ============================================
+
+// User-defined entity types like "Case Studies", "Clients", "Certifications"
+model CustomEntityType {
+  id          String  @id @default(cuid())
+  name        String // Display name: "Case Studies", "Testimonials"
+  slug        String // URL-friendly: "case-studies"
+  description String?
+  icon        String? // Icon name (e.g., "FaBriefcase" from react-icons)
+  color       String? // Hex color for UI (e.g., "#3B82F6")
+  position    Int // For ordering in sidebar/menu
+  isPublic    Boolean @default(true) // Show in public portfolio?
+
+  // Field definitions stored as JSON schema
+  // Example: [{ key: "client", type: "text", label: "Client Name", required: true }, ...]
+  fieldSchema Json
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Instances of this entity type
+  entities CustomEntity[]
+
+  // Separate field definitions (optional - for strict typing)
+  fieldDefinitions CustomFieldDefinition[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, slug]) // Each user can have one entity type with this slug
+}
+
+// Individual records of a custom entity type
+model CustomEntity {
+  id String @id @default(cuid())
+
+  // The entity type this belongs to
+  entityTypeId String
+  entityType   CustomEntityType @relation(fields: [entityTypeId], references: [id], onDelete: Cascade)
+
+  // The actual data as key-value pairs
+  // Example: { client: "Google", duration: "3 months", outcome: "200% ROI" }
+  data Json
+
+  // Optional featured image
+  image String?
+
+  // Position for ordering
+  position Int @default(0)
+
+  // Published status
+  isPublished Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([entityTypeId, position])
+}
+
+// ============================================
+// OPTIONAL: Predefined Field Types for Custom Entities
+// If you want stricter typing than JSON
+// ============================================
+
+model CustomFieldDefinition {
+  id                String    @id @default(cuid())
+  key               String // Field identifier
+  label             String // Display label
+  type              FieldType // text, number, boolean, etc.
+  required          Boolean   @default(false)
+  defaultValue      String?
+  options           String[] // For select/multiselect (empty array if none)
+  description       String?
+  validationPattern String? // Regex pattern for validation
+  validationMessage String? // Error message for validation
+
+  entityTypeId String
+  entityType   CustomEntityType @relation(fields: [entityTypeId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([entityTypeId, key])
+}
+
+enum FieldType {
+  TEXT
+  TEXTAREA
+  NUMBER
+  BOOLEAN
+  DATE
+  URL
+  EMAIL
+  SELECT
+  MULTISELECT
+  COLOR
+  RICHTEXT
+  JSON
 }

@@ -5,6 +5,13 @@ import {
   ObjectCannedACL,
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
+import {
+  validateCustomFields,
+  parseCustomFieldsFromFormData,
+  sanitizeMetadata,
+  filterMetadataBySchema,
+  EXPERIENCE_FIELD_SCHEMA,
+} from "../lib/custom-fields";
 
 const exp = new Hono();
 
@@ -108,10 +115,20 @@ exp.post("/", async (c: Context) => {
     return c.json({ error: "Unsupported Content-Type" }, 415);
   }
 
+  // Parse custom fields metadata
+  const metadata = parseCustomFieldsFromFormData(formData, EXPERIENCE_FIELD_SCHEMA);
+  const { valid, errors } = validateCustomFields(metadata, EXPERIENCE_FIELD_SCHEMA);
+  if (!valid) {
+    return c.json({ error: "Validation failed", details: errors }, 400);
+  }
+
   // Convert FormData to object
   const data: Record<string, any> = {};
   for (const [key, value] of (formData as any).entries()) {
-    data[key] = value;
+    // Skip metadata fields (they're handled separately)
+    if (!key.startsWith("metadata.")) {
+      data[key] = value;
+    }
   }
   delete data["skills[]"];
   delete data["skills"];
@@ -128,6 +145,7 @@ exp.post("/", async (c: Context) => {
           skills,
           userId,
           position: nextPosition,
+          metadata: sanitizeMetadata(metadata),
         },
       });
       return c.json(savedExperience, 201);
@@ -166,6 +184,7 @@ exp.post("/", async (c: Context) => {
             skills,
             userId,
             position: nextPosition,
+            metadata: sanitizeMetadata(metadata),
           },
         });
         return c.json(savedExperience, 201);
@@ -193,11 +212,25 @@ exp.get("/:user_id", async (c: Context) => {
     return c.json({ error: "User ID is required" }, 400);
   }
 
+  const decodedToken = c.get("decodedToken");
+  const isOwner = decodedToken && decodedToken.id === userId;
+
   const experiences = await prisma.experience.findMany({
     where: { userId },
     orderBy: { position: "asc" },
   });
-  return c.json(experiences, 200);
+
+  // Filter sensitive metadata if not owner
+  const sanitizedExperiences = experiences.map((exp: any) => ({
+    ...exp,
+    metadata: filterMetadataBySchema(
+      exp.metadata,
+      EXPERIENCE_FIELD_SCHEMA,
+      isOwner
+    ),
+  }));
+
+  return c.json(sanitizedExperiences, 200);
 });
 
 // Get a single experience for a specific user
@@ -234,6 +267,15 @@ exp.put("/:id", async (c: Context) => {
     formData.getAll("skills").length > 0 ||
     formData.get("skills") != null;
   const skills = hasSkills ? parseSkillsFromFormData(formData) : null;
+  const hasMetadata = Array.from((formData as any).keys()).some((key) => typeof key === "string" && key.startsWith("metadata."));
+  const metadata = hasMetadata ? parseCustomFieldsFromFormData(formData, EXPERIENCE_FIELD_SCHEMA) : null;
+
+  if (metadata) {
+    const { valid, errors } = validateCustomFields(metadata, EXPERIENCE_FIELD_SCHEMA);
+    if (!valid) {
+      return c.json({ error: "Validation failed", details: errors }, 400);
+    }
+  }
 
   const experienceId = c.req.param("id");
   const existingExperience = await prisma.experience.findUnique({
@@ -301,7 +343,9 @@ exp.put("/:id", async (c: Context) => {
   // Convert FormData to a plain object safely
   const data: Record<string, any> = {};
   for (const [key, value] of (formData as any).entries()) {
-    data[key] = value;
+    if (!key.startsWith("metadata.")) {
+      data[key] = value;
+    }
   }
 
   // Remove raw skills fields; we'll set normalized skills below
@@ -318,6 +362,10 @@ exp.put("/:id", async (c: Context) => {
   // Apply skills only when explicitly provided in the form (allow clearing)
   if (hasSkills) {
     data["skills"] = skills ?? [];
+  }
+
+  if (metadata) {
+    data["metadata"] = sanitizeMetadata(metadata);
   }
 
   try {

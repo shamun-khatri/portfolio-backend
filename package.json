@@ -18,7 +18,8 @@
     "cuid": "^3.0.0",
     "dotenv": "^16.4.5",
     "hono": "^4.5.6",
-    "next-auth": "^5.0.0-beta.29"
+    "next-auth": "^5.0.0-beta.29",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240529.0",

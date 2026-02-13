@@ -6,6 +6,12 @@ import {
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import uploadToS3 from "../lib/upload-to-s3";
+import {
+  parseMetadata,
+  sanitizeMetadata,
+  filterMetadataBySchema,
+  SKILL_FIELD_SCHEMA,
+} from "../lib/custom-fields";
 
 const skills = new Hono();
 
@@ -111,6 +117,8 @@ skills.post("/", async (c: Context) => {
   }
   data["userId"] = userId;
 
+  const metadata = parseMetadata(formData, SKILL_FIELD_SCHEMA);
+
   try {
     const savedSkill = await prisma.skill.create({
       data: {
@@ -118,6 +126,7 @@ skills.post("/", async (c: Context) => {
         icon: data.icon,
         category: data.category,
         userId: data.userId,
+        metadata: sanitizeMetadata(metadata),
       },
     });
     return c.json(savedSkill, 201);
@@ -136,23 +145,29 @@ skills.get("/:user_id", async (c: Context) => {
     return c.json({ error: "User ID is required" }, 400);
   }
 
+  const decodedToken = c.get("decodedToken");
+  const isOwner = decodedToken && decodedToken.id === userId;
+
   try {
     const skillRecords = await prisma.skill.findMany({
       where: { userId },
-      orderBy: [
-        { category: 'asc' },
-        { name: 'asc' }
-      ],
+      orderBy: [{ category: "asc" }, { name: "asc" }],
     });
 
     if (skillRecords.length === 0) {
-      return c.json(
-        { message: "No skills found for this user" },
-        404
-      );
+      return c.json({ message: "No skills found for this user" }, 404);
     }
 
-    return c.json(skillRecords, 200);
+    const sanitizedRecords = skillRecords.map((skill: any) => ({
+      ...skill,
+      metadata: filterMetadataBySchema(
+        skill.metadata,
+        SKILL_FIELD_SCHEMA,
+        isOwner
+      ),
+    }));
+
+    return c.json(sanitizedRecords, 200);
   } catch (error) {
     console.error("Error fetching skills:", error);
     return c.json({ error: (error as Error).message }, 500);
@@ -168,31 +183,38 @@ skills.get("/:user_id/grouped", async (c: Context) => {
     return c.json({ error: "User ID is required" }, 400);
   }
 
+  const decodedToken = c.get("decodedToken");
+  const isOwner = decodedToken && decodedToken.id === userId;
+
   try {
     const skillRecords = await prisma.skill.findMany({
       where: { userId },
-      orderBy: [
-        { category: 'asc' },
-        { name: 'asc' }
-      ],
+      orderBy: [{ category: "asc" }, { name: "asc" }],
     });
 
     if (skillRecords.length === 0) {
-      return c.json(
-        { message: "No skills found for this user" },
-        404
-      );
+      return c.json({ message: "No skills found for this user" }, 404);
     }
 
-    // Group skills by category
-    const groupedSkills = skillRecords.reduce((acc: Record<string, any[]>, skill: any) => {
-      const category = skill.category || 'Other';
-      if (!acc[category]) {
-        acc[category] = [];
-      }
-      acc[category].push(skill);
-      return acc;
-    }, {} as Record<string, any[]>);
+    // Group skills by category and filter metadata
+    const groupedSkills = skillRecords.reduce(
+      (acc: Record<string, any[]>, skill: any) => {
+        const category = skill.category || "Other";
+        if (!acc[category]) {
+          acc[category] = [];
+        }
+        acc[category].push({
+          ...skill,
+          metadata: filterMetadataBySchema(
+            skill.metadata,
+            SKILL_FIELD_SCHEMA,
+            isOwner
+          ),
+        });
+        return acc;
+      },
+      {} as Record<string, any[]>
+    );
 
     return c.json(groupedSkills, 200);
   } catch (error) {
@@ -207,6 +229,9 @@ skills.get("/:user_id/:id", async (c: Context) => {
   const skillId = c.req.param("id");
   const userId = c.req.param("user_id");
 
+  const decodedToken = c.get("decodedToken");
+  const isOwner = decodedToken && decodedToken.id === userId;
+
   try {
     const skill = await prisma.skill.findFirst({
       where: { id: skillId, userId },
@@ -216,7 +241,17 @@ skills.get("/:user_id/:id", async (c: Context) => {
       return c.json({ error: "Skill not found" }, 404);
     }
 
-    return c.json(skill, 200);
+    return c.json(
+      {
+        ...skill,
+        metadata: filterMetadataBySchema(
+          skill.metadata,
+          SKILL_FIELD_SCHEMA,
+          isOwner
+        ),
+      },
+      200
+    );
   } catch (error) {
     return c.json({ error: (error as Error).message }, 500);
   }
@@ -315,6 +350,8 @@ skills.put("/:id", async (c: Context) => {
   // Never allow changing ownership via update
   if ("userId" in data) delete (data as Record<string, unknown>)["userId"];
 
+  const metadata = parseMetadata(formData, SKILL_FIELD_SCHEMA);
+
   try {
     const updatedSkill = await prisma.skill.update({
       where: { id: skillId },
@@ -322,6 +359,7 @@ skills.put("/:id", async (c: Context) => {
         name: data.name || existingSkill.name,
         icon: data.icon || existingSkill.icon,
         category: data.category || existingSkill.category,
+        metadata: Object.keys(metadata).length > 0 ? sanitizeMetadata(metadata) : existingSkill.metadata,
       },
     });
 

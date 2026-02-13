@@ -4,6 +4,12 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { Context, Hono } from "hono";
+import {
+  parseMetadata,
+  sanitizeMetadata,
+  filterMetadataBySchema,
+  BIO_FIELD_SCHEMA,
+} from "../lib/custom-fields";
 
 const bio = new Hono();
 
@@ -72,6 +78,8 @@ bio.post("/", async (c: Context) => {
     data.designations = JSON.parse(data.designations);
   }
 
+  const metadata = parseMetadata(formData, BIO_FIELD_SCHEMA);
+
   try {
     const savedBio = await prisma.bio.create({
       data: {
@@ -81,6 +89,7 @@ bio.post("/", async (c: Context) => {
         profileImage: data.profileImage as string,
         resumeUrl: data.resumeUrl as string | undefined,
         userId: data.userId as string,
+        metadata: sanitizeMetadata(metadata),
       },
     });
     return c.json(savedBio, 201);
@@ -98,6 +107,9 @@ bio.get("/:user_id", async (c: Context) => {
     return c.json({ error: "User ID is required" }, 400);
   }
 
+  const decodedToken = c.get("decodedToken");
+  const isOwner = decodedToken && decodedToken.id === userId;
+
   try {
     const bio = await prisma.bio.findFirst({
       where: { userId },
@@ -107,7 +119,13 @@ bio.get("/:user_id", async (c: Context) => {
       return c.json({}, 200);
     }
 
-    return c.json(bio, 200);
+    return c.json(
+      {
+        ...bio,
+        metadata: filterMetadataBySchema(bio.metadata, BIO_FIELD_SCHEMA, isOwner),
+      },
+      200
+    );
   } catch (error) {
     return c.json(
       { error: `Failed to fetch bio: ${(error as Error).message}` },
@@ -177,6 +195,8 @@ bio.put("/", async (c: Context) => {
     data.designations = JSON.parse(data.designations);
   }
 
+  const metadata = parseMetadata(formData, BIO_FIELD_SCHEMA);
+
   try {
     const updatedBio = await prisma.bio.update({
       where: { userId },
@@ -186,6 +206,7 @@ bio.put("/", async (c: Context) => {
         desc: data.desc as string,
         profileImage: data.profileImage as string,
         resumeUrl: data.resumeUrl as string | undefined,
+        metadata: Object.keys(metadata).length > 0 ? sanitizeMetadata(metadata) : undefined,
       },
     });
     return c.json(updatedBio, 200);

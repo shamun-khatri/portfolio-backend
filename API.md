@@ -11,7 +11,9 @@ Most endpoints (except GET requests) require authentication via JWT token from n
 | JWT Session | Cookie | `next-auth.session-token` cookie from next-auth |
 | Public | None | GET endpoints are publicly accessible |
 
-**Note:** POST/PUT/PATCH/DELETE operations require the user to have a valid session token.
+**Note:** GET requests will automatically detect the user session. If the requester is the owner of the data, the API will include private fields (like `isPublished: false` items or detailed metadata). Unauthenticated GET requests only return public data.
+
+**Note:** POST/PUT/PATCH/DELETE operations require the user to have a valid session token corresponding to the resource owner.
 
 ---
 
@@ -38,6 +40,48 @@ All responses are JSON.
 ---
 
 ## Endpoints
+
+### Custom Entities
+
+Dynamic data structures defined by the user.
+
+#### Custom Entity Types
+Definitions for custom data (e.g., "Certificates", "Clients").
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| name | string | Yes | Display name |
+| slug | string | Yes | Unique URL identifier |
+| description| string | No | Optional info |
+| fields | JSON | Yes | Array of field definitions |
+
+**Example Fields JSON:**
+```json
+[
+  { "key": "issuedBy", "type": "text", "label": "Issued By", "required": true },
+  { "key": "date", "type": "date", "label": "Date Received" }
+]
+```
+
+- **GET `/api/custom-entity-types`**: List user's types.
+- **POST `/api/custom-entity-types`**: Create type.
+- **PUT `/api/custom-entity-types/:id`**: Update type.
+- **DELETE `/api/custom-entity-types/:id`**: Delete type and all its instances.
+
+#### Custom Entity Instances
+The actual data following the schema.
+
+- **GET `/api/custom-entities`**: List all instances.
+- **GET `/api/custom-entities/type/:type_id`**: List instances of a specific type.
+- **POST `/api/custom-entities`**: Create instance. 
+  - Fields: `type_id`, `name`, `metadata.*`.
+- **PUT `/api/custom-entities/:id`**: Update instance.
+- **DELETE `/api/custom-entities/:id`**: Delete instance.
+
+#### Public Access
+- **GET `/api/users/:user_id/custom-entities/:type_slug/public`**: Public entries for a type (cached).
+
+---
 
 ### Bio
 
@@ -145,6 +189,16 @@ Create new experience (auto-assigns position to end of list).
 | desc | string | Yes | Job description |
 | skills | string[] | Yes | Skills/tags array |
 | doc | File/string | No | Document upload |
+| metadata.* | mixed | No | Custom fields (e.g., `metadata.location`) |
+
+**Metadata Fields:**
+The following custom fields are recognized for experiences:
+- `metadata.location` (text)
+- `metadata.employmentType` (select: Full-time, Part-time, Contract, etc.)
+- `metadata.salaryRange` (text)
+- `metadata.isRemote` (boolean)
+- `metadata.technologies` (multiselect)
+- `metadata.achievements` (json)
 
 **Response:** `201 Created`
 

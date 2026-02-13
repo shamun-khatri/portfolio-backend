@@ -16,6 +16,13 @@ export const cachePublic = (maxAge: number = 300): MiddlewareHandler => {
 
     await next();
 
+    // If a session was detected, don't cache on edge (prevent private data leaks)
+    const decodedToken = c.get("decodedToken");
+    if (decodedToken) {
+      c.header("Cache-Control", "no-store, no-cache, must-revalidate");
+      return;
+    }
+
     // Set cache headers for successful responses
     const status = c.res.status;
     if (status >= 200 && status < 300) {
