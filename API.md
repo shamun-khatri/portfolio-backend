@@ -11,9 +11,12 @@ Most endpoints (except GET requests) require authentication via JWT token from n
 | JWT Session | Cookie | `next-auth.session-token` cookie from next-auth |
 | Public | None | GET endpoints are publicly accessible |
 
-**Note:** GET requests will automatically detect the user session. If the requester is the owner of the data, the API will include private fields (like `isPublished: false` items or detailed metadata). Unauthenticated GET requests only return public data.
+**Note:** GET requests will automatically detect the user session. If the requester is the owner of the data, the API will include private fields (like `isPublished: false` items or sensitive metadata). Unauthenticated GET requests only return public data.
 
-**Note:** POST/PUT/PATCH/DELETE operations require the user to have a valid session token corresponding to the resource owner.
+### Metadata & Privacy
+Most entities support **Custom Fields** via a `metadata` JSON object. 
+- When sending data via `multipart/form-data`, use the `metadata.<field_key>` syntax (e.g., `metadata.salaryRange`).
+- Fields can be marked as **Private** in the backend schema. These fields will be automatically filtered out if the requester is not the data owner.
 
 ---
 
@@ -121,6 +124,13 @@ Create a new bio for the authenticated user.
 | desc | string | Yes | Bio description |
 | profileImage | File/string | Yes | Profile image (file upload or URL) |
 | resumeUrl | string | No | Resume PDF URL |
+| metadata.* | mixed | No | Custom fields (e.g., `metadata.twitter`) |
+
+**Metadata Fields:**
+- `metadata.twitter` (url)
+- `metadata.github` (url)
+- `metadata.linkedin` (url)
+- `metadata.availability` (text)
 
 **Response:** `201 Created`
 
@@ -266,6 +276,12 @@ Create education entry.
 | grade | string | Yes |
 | desc | string | Yes |
 | img | File/string | Yes |
+| metadata.* | mixed | No | Custom fields |
+
+**Metadata Fields:**
+- `metadata.location` (text)
+- `metadata.gpa` (number, **private**)
+- `metadata.isOngoing` (boolean)
 
 ---
 
@@ -338,11 +354,23 @@ Create new project.
 | github | string | No | GitHub URL |
 | projectUrl | string | No | Live demo URL |
 | member | string | No | JSON string of members array |
+| metadata.* | mixed | No | Custom fields |
+
+**Metadata Fields:**
+- `metadata.status` (select)
+- `metadata.videoUrl` (url)
+- `metadata.isPrivate` (boolean)
 
 **Member Format:**
 ```json
 [
-  { "name": "Jane", "img": "...", "linkedin": "...", "github": "..." }
+  { 
+    "name": "Jane", 
+    "img": "...", 
+    "linkedin": "...", 
+    "github": "...",
+    "metadata": { "role": "Lead Architect" } 
+  }
 ]
 ```
 
@@ -418,6 +446,12 @@ Create skill.
 | name | string | Yes |
 | icon | string | Yes | Icon name (e.g., "SiReact") |
 | category | string | Yes | Category name |
+| metadata.* | mixed | No | Custom fields |
+
+**Metadata Fields:**
+- `metadata.proficiency` (number, 0-100)
+- `metadata.yearsOfExperience` (number)
+- `metadata.isFavorite` (boolean)
 
 ---
 
