@@ -34,10 +34,14 @@ app.use("*", async (c, next) => {
   if (method === "GET") {
     return cors({ origin: "*", credentials: false })(c, next);
   } else {
-    return cors({ origin: "http://localhost:3000", credentials: true })(
-      c,
-      next
-    );
+    return cors({
+      origin: [
+        "http://localhost:3000",
+        "https://portfolio-admin-jcbs.vercel.app",
+        "https://app.shamunkhatri.me"
+      ],
+      credentials: true,
+    })(c, next);
   }
 });
 

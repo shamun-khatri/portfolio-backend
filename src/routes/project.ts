@@ -1,13 +1,22 @@
 import { Hono, Context } from "hono";
 import {
   S3Client,
-  PutObjectCommand,
-  ObjectCannedACL,
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import cuid from "cuid";
+import uploadToS3 from "../lib/upload-to-s3";
 
 const pjt = new Hono();
+
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+};
 
 const parseTagsFromFormData = (formData: FormData): string[] => {
   const rawTags = formData.getAll("tags[]");
@@ -57,9 +66,16 @@ pjt.post("/", async (c: Context) => {
 
   if (img instanceof File) {
     // Handle S3 image upload (similar to previous code)
-    imageUrl = await uploadToS3(img, c);
-    formData.set("image", imageUrl);
-    console.log("Image uploaded to S3:", imageUrl);
+    try {
+      imageUrl = await uploadToS3(img, c);
+      formData.set("image", imageUrl);
+      console.log("Image uploaded to S3:", imageUrl);
+    } catch (error) {
+      return c.json(
+        { error: `Failed to upload image: ${getErrorMessage(error)}` },
+        500
+      );
+    }
   } else if (typeof img === "string" && img.startsWith("http")) {
     imageUrl = img;
   }
@@ -303,7 +319,14 @@ pjt.put("/:id", async (c: Context) => {
   let imageUrl: string | null = null;
 
   if (img instanceof File) {
-    imageUrl = await uploadToS3(img, c, existing.image);
+    try {
+      imageUrl = await uploadToS3(img, c, existing.image);
+    } catch (error) {
+      return c.json(
+        { error: `Failed to upload image: ${getErrorMessage(error)}` },
+        500
+      );
+    }
   } else if (typeof img === "string" && img.startsWith("http")) {
     imageUrl = img;
   }
@@ -569,48 +592,5 @@ pjt.patch("/reorder", async (c: Context) => {
     return c.json({ error: (err as Error).message }, 500);
   }
 });
-
-async function uploadToS3(
-  file: File,
-  c: Context,
-  previousImageUrl?: string
-): Promise<string> {
-  const s3 = new S3Client({
-    credentials: {
-      accessKeyId: c.env.AWS_ACCESS_KEY_ID,
-      secretAccessKey: c.env.AWS_SECRET_ACCESS_KEY,
-    },
-    region: c.env.AWS_REGION,
-  });
-
-  const s3Params = {
-    Bucket: c.env.AWS_BUCKET_NAME,
-    Key: `images/${Date.now()}-${file.name}`,
-    Body: file,
-    ContentType: file.type,
-    ACL: ObjectCannedACL.public_read,
-  };
-
-  try {
-    // Delete previous image if it was stored in S3
-    if (
-      previousImageUrl &&
-      previousImageUrl.startsWith(`https://${c.env.AWS_BUCKET_NAME}.s3.`)
-    ) {
-      const previousKey = previousImageUrl.split(".com/")[1];
-      await s3.send(
-        new DeleteObjectCommand({
-          Bucket: c.env.AWS_BUCKET_NAME,
-          Key: previousKey,
-        })
-      );
-    }
-
-    await s3.send(new PutObjectCommand(s3Params));
-    return `https://${s3Params.Bucket}.s3.${c.env.AWS_REGION}.amazonaws.com/${s3Params.Key}`;
-  } catch (error) {
-    throw new Error(`Failed to upload image: ${(error as Error).message}`);
-  }
-}
 
 export default pjt;
