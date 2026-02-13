@@ -28,23 +28,21 @@ app.use(logger());
 
 // app.use("api/*", prisma()).basePath("api").route("/experiences", exp);
 
-app.use("api/*", prisma());
+app.use("/api/*", prisma());
 
 app.use("*", async (c, next) => {
-  const method = c.req.method;
+  const origin = c.req.header("Origin");
+  const allowedOrigins = [
+    "http://localhost:3000",
+    "https://portfolio-admin-jcbs.vercel.app",
+    "https://app.shamunkhatri.me",
+  ];
 
-  if (method === "GET") {
-    return cors({ origin: "*", credentials: false })(c, next);
-  } else {
-    return cors({
-      origin: [
-        "http://localhost:3000",
-        "https://portfolio-admin-jcbs.vercel.app",
-        "https://app.shamunkhatri.me"
-      ],
-      credentials: true,
-    })(c, next);
+  if (origin && allowedOrigins.includes(origin)) {
+    return cors({ origin, credentials: true })(c, next);
   }
+
+  return cors({ origin: "*", credentials: false })(c, next);
 });
 
 // app.use("api/*", cors({ credentials: true, origin: "*" }));
