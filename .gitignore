@@ -31,3 +31,8 @@ lerna-debug.log*
 
 # misc
 .DS_Store
+
+# local backups / recovery artifacts
+backups/
+*.dump
+prisma/migrations_legacy_*/
