@@ -65,18 +65,22 @@ app.notFound((c) => {
   return c.json({ error: "Route not found" }, 404);
 });
 
+// Apply cache middleware before JWT (GET requests are public and cached)
+app.use("/api/bio/*", cacheLong);
+app.use("/api/experiences/*", cacheMedium);
+app.use("/api/education/*", cacheMedium);
+app.use("/api/projects/*", cacheMedium);
+app.use("/api/skills/*", cacheMedium);
+
+// JWT verification (GET requests bypass auth check in verifyJWT middleware)
 app.use("/api/*", verifyJWT());
 
+// Mount routes
 app.route("/api/experiences", exp);
-
 app.route("/api/education", edu);
-
 app.route("/api/projects", pjt);
-
 app.route("/api/users", user);
-
-app.route("api/bio", bio);
-
+app.route("/api/bio", bio);
 app.route("/api/skills", skills);
 
 app.onError((err, c) => {

@@ -120,3 +120,30 @@ Experiences and education use integer `position` field for manual ordering:
 Routes accept both `application/json` and `multipart/form-data`:
 - JSON payloads with base64 images converted to File objects
 - Arrays like `skills[]` normalized to string arrays via `parseSkillsFromFormData()`
+
+## Caching
+
+Public GET endpoints have Cloudflare edge caching enabled via [```src/lib/cache-middleware.ts```](src/lib/cache-middleware.ts):
+
+| Route | Duration | Use Case |
+|-------|----------|----------|
+| `/api/bio/*` | 1 hour | Bio changes rarely |
+| `/api/experiences/*` | 5 minutes | Portfolio data |
+| `/api/education/*` | 5 minutes | Portfolio data |
+| `/api/projects/*` | 5 minutes | Portfolio data |
+| `/api/skills/*` | 5 minutes | Portfolio data |
+
+**Cache Headers:** `Cache-Control: public, max-age=<seconds>`
+
+The middleware runs before JWT verification since GET requests are public.
+
+## API Documentation
+
+[```API.md```](API.md) contains comprehensive endpoint documentation:
+- Endpoint paths and methods
+- Request/response schemas
+- Authentication requirements
+- Error codes
+- Caching information
+
+This file is designed for both human reading and AI agent consumption.
