@@ -12,17 +12,16 @@ bio.get("/", (c: Context) => {
 });
 
 // Create a new bio
-// Create a new bio
 bio.post("/", async (c: Context) => {
   const prisma = c.get("prisma");
-  const userId = c.get("decodedToken").id; // Assuming userId comes from JWT middleware
+  const userId = c.get("decodedToken").id;
 
   if (!userId) {
     return c.json({ error: "User ID is required" }, 400);
   }
 
   const contentType = c.req.header("Content-Type");
-  let formData: FormData | Record<string, any> = {};
+  let formData: FormData;
   let profileImage: File | Blob | string | null = null;
 
   if (contentType?.includes("multipart/form-data")) {
@@ -61,8 +60,12 @@ bio.post("/", async (c: Context) => {
     return c.json({ error: "Unsupported Content-Type" }, 415);
   }
 
-  const data = Object.fromEntries(formData.entries());
-  data["userId"] = userId; // Add userId to the data object
+  // Convert FormData to object properly for Cloudflare Workers
+  const data: Record<string, any> = {};
+  for (const [key, value] of (formData as any).entries()) {
+    data[key] = value;
+  }
+  data["userId"] = userId;
 
   // Convert designations to an array if it's a string
   if (typeof data.designations === "string") {
@@ -72,12 +75,12 @@ bio.post("/", async (c: Context) => {
   try {
     const savedBio = await prisma.bio.create({
       data: {
-        name: data.name,
-        designations: data.designations,
-        desc: data.desc,
-        profileImage: data.profileImage,
-        resumeUrl: data.resumeUrl,
-        userId: data.userId,
+        name: data.name as string,
+        designations: data.designations as string[],
+        desc: data.desc as string,
+        profileImage: data.profileImage as string,
+        resumeUrl: data.resumeUrl as string | undefined,
+        userId: data.userId as string,
       },
     });
     return c.json(savedBio, 201);
@@ -116,14 +119,14 @@ bio.get("/:user_id", async (c: Context) => {
 // Update bio of user
 bio.put("/", async (c: Context) => {
   const prisma = c.get("prisma");
-  const userId = c.get("decodedToken").id; // Assuming userId comes from JWT middleware
+  const userId = c.get("decodedToken").id;
 
   if (!userId) {
     return c.json({ error: "User ID is required" }, 400);
   }
 
   const contentType = c.req.header("Content-Type");
-  let formData: FormData | Record<string, any> = {};
+  let formData: FormData;
   let profileImage: File | Blob | string | null = null;
 
   if (contentType?.includes("multipart/form-data")) {
@@ -162,8 +165,12 @@ bio.put("/", async (c: Context) => {
     return c.json({ error: "Unsupported Content-Type" }, 415);
   }
 
-  const data = Object.fromEntries(formData.entries());
-  data["userId"] = userId; // Add userId to the data object
+  // Convert FormData to object properly for Cloudflare Workers
+  const data: Record<string, any> = {};
+  for (const [key, value] of (formData as any).entries()) {
+    data[key] = value;
+  }
+  data["userId"] = userId;
 
   // Convert designations to an array if it's a string
   if (typeof data.designations === "string") {
@@ -173,7 +180,13 @@ bio.put("/", async (c: Context) => {
   try {
     const updatedBio = await prisma.bio.update({
       where: { userId },
-      data: data,
+      data: {
+        name: data.name as string,
+        designations: data.designations as string[],
+        desc: data.desc as string,
+        profileImage: data.profileImage as string,
+        resumeUrl: data.resumeUrl as string | undefined,
+      },
     });
     return c.json(updatedBio, 200);
   } catch (error) {

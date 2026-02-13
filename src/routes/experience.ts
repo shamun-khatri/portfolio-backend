@@ -1,5 +1,4 @@
 import { Hono, Context } from "hono";
-import { serialize } from "object-to-formdata";
 import {
   S3Client,
   PutObjectCommand,
@@ -13,7 +12,7 @@ exp.get("/", (c: Context) => {
   return c.text("Experience route");
 });
 
-function jsonToFormData(jsonObject) {
+function jsonToFormData(jsonObject: Record<string, any>): FormData {
   const formData = new FormData();
 
   for (const key in jsonObject) {
@@ -21,15 +20,16 @@ function jsonToFormData(jsonObject) {
       const value = jsonObject[key];
 
       // Handle file objects directly
-      if (value instanceof File || value instanceof Blob) {
-        formData.append(key, value, value.name || "untitled"); // Add filename for File objects
+      if (value instanceof File) {
+        formData.append(key, value, value.name || "untitled");
+      } else if (value instanceof Blob) {
+        formData.append(key, value, "untitled");
       } else if (typeof value === "object" && value !== null) {
         // Handle nested objects/arrays by stringifying them
-        // Note: FormData flattens nested structures, so complex objects might need specific handling
         formData.append(key, JSON.stringify(value));
       } else {
         // Handle primitive values
-        formData.append(key, value);
+        formData.append(key, String(value));
       }
     }
   }
@@ -67,21 +67,20 @@ const parseSkillsFromFormData = (formData: FormData): string[] => {
 // Create a new experience
 exp.post("/", async (c: Context) => {
   const prisma = c.get("prisma");
-  const userId = c.get("decodedToken").id; // Assuming userId comes from JWT middleware
+  const userId = c.get("decodedToken").id;
 
   console.log("userId:", userId);
 
   const contentType = c.req.header("Content-Type");
-
-  let formData: FormData | Record<string, any> = {};
-  let img: File | Blob | String | null = null;
+  let formData: FormData;
+  let img: File | null = null;
   let skills: string[] = [];
 
   if (contentType?.includes("application/json")) {
     const data = await c.req.json();
     formData = jsonToFormData(data);
 
-    const imgData: Record<string, any> = data.img[0];
+    const imgData: Record<string, any> = data.img?.[0];
     if (!imgData || !imgData["thumbUrl"]) {
       return c.json({ error: "Image data is missing or invalid" }, 400);
     }
@@ -98,7 +97,10 @@ exp.post("/", async (c: Context) => {
     formData.set("img", img);
   } else if (contentType?.includes("multipart/form-data")) {
     formData = await c.req.formData();
-    img = formData.get("img");
+    const imgValue = formData.get("img");
+    if (imgValue instanceof File) {
+      img = imgValue;
+    }
 
     // Convert skills[]/skills to an array
     skills = parseSkillsFromFormData(formData);
@@ -106,10 +108,15 @@ exp.post("/", async (c: Context) => {
     return c.json({ error: "Unsupported Content-Type" }, 415);
   }
 
-  if (!(img instanceof File)) {
-    const data = Object.fromEntries(formData.entries());
-    delete data["skills[]"];
-    delete data["skills"];
+  // Convert FormData to object
+  const data: Record<string, any> = {};
+  for (const [key, value] of (formData as any).entries()) {
+    data[key] = value;
+  }
+  delete data["skills[]"];
+  delete data["skills"];
+
+  if (!img) {
     try {
       // Auto-assign position for new experience
       const highest = await prisma.experience.findFirst({ where: { userId }, orderBy: { position: "desc" } });
@@ -118,7 +125,7 @@ exp.post("/", async (c: Context) => {
       const savedExperience = await prisma.experience.create({
         data: {
           ...data,
-          skills, // Pass the skills array
+          skills,
           userId,
           position: nextPosition,
         },
@@ -146,10 +153,8 @@ exp.post("/", async (c: Context) => {
     try {
       await s3.send(new PutObjectCommand(s3Params));
       const imageUrl = `https://${s3Params.Bucket}.s3.${c.env.AWS_REGION}.amazonaws.com/${s3Params.Key}`;
-      formData.set("img", imageUrl);
-      const data = Object.fromEntries(formData.entries());
-      delete data["skills[]"];
-      delete data["skills"];
+      data["img"] = imageUrl;
+
       try {
         // Auto-assign position for new experience
         const highest = await prisma.experience.findFirst({ where: { userId }, orderBy: { position: "desc" } });
@@ -158,7 +163,7 @@ exp.post("/", async (c: Context) => {
         const savedExperience = await prisma.experience.create({
           data: {
             ...data,
-            skills, // Pass the skills array
+            skills,
             userId,
             position: nextPosition,
           },
@@ -217,7 +222,7 @@ exp.get("/:user_id/:id", async (c: Context) => {
 exp.put("/:id", async (c: Context) => {
   const prisma = c.get("prisma");
   // Auth check
-  const userId = c.get("decodedToken")?.id; // Assuming userId comes from JWT middleware
+  const userId = c.get("decodedToken")?.id;
   if (!userId) {
     return c.json({ error: "User ID is required" }, 400);
   }
@@ -286,7 +291,6 @@ exp.put("/:id", async (c: Context) => {
     try {
       await s3.send(new PutObjectCommand(s3Params));
       newImageUrl = `https://${s3Params.Bucket}.s3.${c.env.AWS_REGION}.amazonaws.com/${s3Params.Key}`;
-      formData.set("img", newImageUrl);
     } catch (error) {
       return c.json({ error: `Failed to upload image: ${error}` }, 500);
     }
@@ -294,9 +298,9 @@ exp.put("/:id", async (c: Context) => {
     newImageUrl = img;
   }
 
-  // Convert FormData to a plain object safely (avoid relying on entries() typings)
+  // Convert FormData to a plain object safely
   const data: Record<string, any> = {};
-  for (const [key, value] of (formData as any)) {
+  for (const [key, value] of (formData as any).entries()) {
     data[key] = value;
   }
 
@@ -386,7 +390,7 @@ exp.delete("/:id", async (c: Context) => {
         where: { userId },
         orderBy: { position: "asc" },
       });
-      const updates = remaining.map((rec: any, idx: any) =>
+      const updates = remaining.map((rec: { id: string }, idx: number) =>
         prisma.experience.update({
           where: { id: rec.id },
           data: { position: idx + 1 },
@@ -410,7 +414,7 @@ exp.patch("/reorder", async (c: Context) => {
   const userId = c.get("decodedToken")?.id;
   if (!userId) return c.json({ error: "User ID is required" }, 401);
 
-  let body: any;
+  let body: { order?: string[] };
   try {
     body = await c.req.json();
   } catch (err) {

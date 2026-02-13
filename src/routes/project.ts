@@ -81,10 +81,14 @@ pjt.post("/", async (c: Context) => {
   }
 
   const membersData = formData.get("member");
-  const members = membersData ? JSON.parse(membersData.toString()) : [];
+  const members: Array<{ id?: string; name: string; img?: string; linkedin?: string; github?: string }> = membersData ? JSON.parse(membersData.toString()) : [];
   const tags = parseTagsFromFormData(formData);
 
-  const projectData = Object.fromEntries(formData.entries());
+  // Convert FormData to object properly for Cloudflare Workers
+  const projectData: Record<string, any> = {};
+  for (const [key, value] of (formData as any).entries()) {
+    projectData[key] = value;
+  }
   delete projectData["member"];
   delete projectData["tags[]"];
   delete projectData["tags"];
@@ -121,7 +125,7 @@ pjt.post("/", async (c: Context) => {
     // Insert members if the array is not empty
     if (members.length > 0) {
       // Add unique IDs to each member
-      const membersWithIds = members.map((member) => ({
+      const membersWithIds = members.map((member: { id?: string; name: string; img?: string; linkedin?: string; github?: string }) => ({
         id: cuid(),
         ...member,
       }));
@@ -332,7 +336,8 @@ pjt.put("/:id", async (c: Context) => {
   }
 
   const membersRaw = formData.get("member");
-  const incomingMembers = membersRaw ? JSON.parse(membersRaw.toString()) : [];
+  type MemberInput = { id?: string; name: string; img?: string; linkedin?: string; github?: string };
+  const incomingMembers: MemberInput[] = membersRaw ? JSON.parse(membersRaw.toString()) : [];
   const hasTags =
     formData.getAll("tags[]").length > 0 ||
     formData.getAll("tags").length > 0;
@@ -368,13 +373,13 @@ pjt.put("/:id", async (c: Context) => {
 
   // Sync members (create / update / delete removed)
   if (Array.isArray(incomingMembers)) {
-    const existingIds = new Set(existing.members.map((m) => m.id));
-    const incomingIds = new Set(
-      incomingMembers.filter((m) => m.id).map((m) => m.id)
+    const existingIds = new Set<string>(existing.members.map((m: { id: string }) => m.id));
+    const incomingIds = new Set<string>(
+      incomingMembers.filter((m: MemberInput) => m.id).map((m: MemberInput) => m.id!)
     );
 
     // Delete members that were removed
-    const toDelete = [...existingIds].filter((id) => !incomingIds.has(id));
+    const toDelete = [...existingIds].filter((id: string) => !incomingIds.has(id));
     if (toDelete.length) {
       await prisma.member.deleteMany({
         where: { id: { in: toDelete }, projectId },
@@ -514,7 +519,7 @@ pjt.delete("/", async (c: Context) => {
       where: { userId },
       select: { id: true, image: true },
     });
-    const projectIds = userProjects.map((p) => p.id);
+    const projectIds = userProjects.map((p: { id: string; image: string | null }) => p.id);
 
     if (projectIds.length > 0) {
       // 1. Delete images from S3
