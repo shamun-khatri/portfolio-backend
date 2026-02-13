@@ -10,6 +10,7 @@ import { verifyJWT } from "./lib/verify-token";
 import user from "./routes/user";
 import bio from "./routes/bio";
 import skills from "./routes/skill";
+import { cacheLong, cacheMedium } from "./lib/cache-middleware";
 
 type Bindings = {
   DATABASE_URL: string;
