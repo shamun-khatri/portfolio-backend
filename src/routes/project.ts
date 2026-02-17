@@ -129,9 +129,10 @@ pjt.post("/", async (c: Context) => {
     const sanitizedMetadata = sanitizeMetadata(metadata);
 
     // Single raw SQL query for Project insertion (include position and metadata)
+    const now = new Date();
     const savedProject = await prisma.$queryRaw`
-      INSERT INTO "Project" (id, title, description, image, date, tags, category, github, "projectUrl", "userId", position, metadata)
-      VALUES (${projectId}, ${title}, ${description}, ${imageUrl}, ${date}, ${tags}, ${category}, ${github}, ${projectUrl}, ${userId}, ${nextPosition}, ${sanitizedMetadata})
+      INSERT INTO "Project" (id, title, description, image, date, tags, category, github, "projectUrl", "userId", position, metadata, "createdAt", "updatedAt")
+      VALUES (${projectId}, ${title}, ${description}, ${imageUrl}, ${date}, ${tags}, ${category}, ${github}, ${projectUrl}, ${userId}, ${nextPosition}, ${sanitizedMetadata}, ${now}, ${now})
       RETURNING *;
     `;
 
@@ -154,8 +155,8 @@ pjt.post("/", async (c: Context) => {
       );
 
       await prisma.$queryRaw`
-        INSERT INTO "Member" (id, name, img, linkedin, github, "projectId", metadata)
-        SELECT members.id, members.name, members.img, members.linkedin, members.github, ${projectId}, members.metadata::jsonb
+        INSERT INTO "Member" (id, name, img, linkedin, github, "projectId", metadata, "createdAt", "updatedAt")
+        SELECT members.id, members.name, members.img, members.linkedin, members.github, ${projectId}, members.metadata::jsonb, NOW(), NOW()
         FROM jsonb_to_recordset(${JSON.stringify(membersWithIds)}::jsonb)
         AS members(id text, name text, img text, linkedin text, github text, metadata text);
       `;

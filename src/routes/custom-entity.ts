@@ -10,14 +10,58 @@ import cuid from "cuid";
 
 const router = new Hono();
 
+const FIELD_TYPES = [
+  "text",
+  "textarea",
+  "number",
+  "boolean",
+  "date",
+  "url",
+  "email",
+  "select",
+  "multiselect",
+  "color",
+  "richtext",
+  "json",
+  "image",
+  "file",
+] as const;
+
+const normalizeFieldType = (value: unknown): string => {
+  if (typeof value !== "string") return String(value ?? "");
+  const normalized = value.trim().toLowerCase().replace(/[\s_-]/g, "");
+
+  const aliases: Record<string, string> = {
+    rich: "richtext",
+    richtextfield: "richtext",
+    markdown: "richtext",
+    multiselectfield: "multiselect",
+    multipleselect: "multiselect",
+    checkbox: "boolean",
+    media: "image",
+  };
+
+  return aliases[normalized] ?? normalized;
+};
+
+const normalizeFieldSchema = (schema: unknown): unknown => {
+  if (!Array.isArray(schema)) return schema;
+
+  return schema.map((field) => {
+    if (!field || typeof field !== "object") return field;
+    const typedField = field as Record<string, unknown>;
+    return {
+      ...typedField,
+      type: normalizeFieldType(typedField.type),
+    };
+  });
+};
+
 // Validation schema for field definition
 const FieldDefinitionSchema = z.object({
   key: z.string().min(1),
   label: z.string().min(1),
-  type: z.enum([
-    "text", "textarea", "number", "boolean", "date", "url", "email",
-    "select", "multiselect", "color", "richtext", "json"
-  ]),
+  type: z.enum(FIELD_TYPES),
   required: z.boolean().default(false),
   isPrivate: z.boolean().default(false),
   defaultValue: z.any().optional(),
@@ -82,6 +126,9 @@ router.post("/custom-entity-types", async (c: Context) => {
 
   try {
     const body = await c.req.json();
+    if (body?.fieldSchema) {
+      body.fieldSchema = normalizeFieldSchema(body.fieldSchema);
+    }
     const validated = EntityTypeSchema.parse(body);
 
     // Check for duplicate slug
@@ -163,6 +210,9 @@ router.put("/custom-entity-types/:id", async (c: Context) => {
 
   try {
     const body = await c.req.json();
+    if (body?.fieldSchema) {
+      body.fieldSchema = normalizeFieldSchema(body.fieldSchema);
+    }
     const validated = EntityTypeSchema.partial().parse(body);
 
     // Verify ownership
@@ -279,6 +329,33 @@ router.patch("/custom-entity-types/reorder", async (c: Context) => {
 
 // ==================== CUSTOM ENTITY INSTANCES ====================
 
+// GET /api/custom-entities - List all instances for the user
+router.get("/custom-entities", async (c: Context) => {
+  const prisma = c.get("prisma");
+  const userId = c.get("decodedToken")?.id;
+
+  if (!userId) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+
+  try {
+    const entities = await prisma.customEntity.findMany({
+      where: {
+        entityType: { userId }
+      },
+      include: {
+        entityType: true
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    return c.json(entities);
+  } catch (error) {
+    console.error("Error fetching all custom entities:", error);
+    return c.json({ error: "Failed to fetch entities" }, 500);
+  }
+});
+
 // GET /api/users/:user_id/custom-entities/:type_slug/public - Public access to entities
 router.get("/users/:user_id/custom-entities/:type_slug/public", async (c: Context) => {
   const prisma = c.get("prisma");
@@ -338,8 +415,8 @@ router.get("/users/:user_id/custom-entities/:type_slug/public", async (c: Contex
   }
 });
 
-// GET /api/custom-entities/:type_id - List all entities of a type
-router.get("/custom-entities/:type_id", async (c: Context) => {
+// GET /api/custom-entities/type/:type_id - List all entities of a type
+router.get("/custom-entities/type/:type_id", async (c: Context) => {
   const prisma = c.get("prisma");
   const userId = c.get("decodedToken")?.id;
   const typeId = c.req.param("type_id");
@@ -373,8 +450,8 @@ router.get("/custom-entities/:type_id", async (c: Context) => {
   }
 });
 
-// POST /api/custom-entities/:type_id - Create new entity
-router.post("/custom-entities/:type_id", async (c: Context) => {
+// POST /api/custom-entities/type/:type_id - Create new entity
+router.post("/custom-entities/type/:type_id", async (c: Context) => {
   const prisma = c.get("prisma");
   const userId = c.get("decodedToken")?.id;
   const typeId = c.req.param("type_id");
@@ -427,8 +504,8 @@ router.post("/custom-entities/:type_id", async (c: Context) => {
   }
 });
 
-// GET /api/custom-entities/item/:id - Get single entity
-router.get("/custom-entities/item/:id", async (c: Context) => {
+// GET /api/custom-entities/:id - Get single entity
+router.get("/custom-entities/:id", async (c: Context) => {
   const prisma = c.get("prisma");
   const userId = c.get("decodedToken")?.id;
   const id = c.req.param("id");
@@ -456,8 +533,8 @@ router.get("/custom-entities/item/:id", async (c: Context) => {
   }
 });
 
-// PUT /api/custom-entities/item/:id - Update entity
-router.put("/custom-entities/item/:id", async (c: Context) => {
+// PUT /api/custom-entities/:id - Update entity
+router.put("/custom-entities/:id", async (c: Context) => {
   const prisma = c.get("prisma");
   const userId = c.get("decodedToken")?.id;
   const id = c.req.param("id");
@@ -503,8 +580,8 @@ router.put("/custom-entities/item/:id", async (c: Context) => {
   }
 });
 
-// DELETE /api/custom-entities/item/:id - Delete entity
-router.delete("/custom-entities/item/:id", async (c: Context) => {
+// DELETE /api/custom-entities/:id - Delete entity
+router.delete("/custom-entities/:id", async (c: Context) => {
   const prisma = c.get("prisma");
   const userId = c.get("decodedToken")?.id;
   const id = c.req.param("id");
@@ -549,8 +626,8 @@ router.delete("/custom-entities/item/:id", async (c: Context) => {
   }
 });
 
-// PATCH /api/custom-entities/:type_id/reorder - Reorder entities
-router.patch("/custom-entities/:type_id/reorder", async (c: Context) => {
+// PATCH /api/custom-entities/type/:type_id/reorder - Reorder entities
+router.patch("/custom-entities/type/:type_id/reorder", async (c: Context) => {
   const prisma = c.get("prisma");
   const userId = c.get("decodedToken")?.id;
   const typeId = c.req.param("type_id");
@@ -660,6 +737,13 @@ function validateEntityData(data: Record<string, any>, schema: any[]): { valid: 
           new URL(value);
         } catch {
           errors.push(`Field "${field.label}" must be a valid URL`);
+        }
+        break;
+
+      case "image":
+      case "file":
+        if (typeof value !== "string") {
+          errors.push(`Field "${field.label}" must be a string`);
         }
         break;
 
